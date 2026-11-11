@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMotionValueEvent, useScroll } from "framer-motion";
@@ -28,6 +28,12 @@ export function SiteNav({ solid = false }: SiteNavProps) {
   useMotionValueEvent(scrollY, "change", (y) => {
     setScrolled(y > 80);
   });
+
+  // A page can open already scrolled (a link to a section, or a reload), with no scroll
+  // event to say so.
+  useEffect(() => {
+    setScrolled(window.scrollY > 80);
+  }, []);
 
   const docked = solid || scrolled;
 

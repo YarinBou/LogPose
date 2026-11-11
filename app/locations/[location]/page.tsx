@@ -128,7 +128,7 @@ export default async function LocationPage({ params }: LocationPageProps) {
           {placeSentence(location)} {region?.blurb}
         </p>
         <p>
-          <TextLink href={`/?place=${location.id}#map`}>Show {location.name} on the 2D world map</TextLink>, or turn the{" "}
+          <TextLink href={`/?place=${location.id}`}>Show {location.name} on the 2D world map</TextLink>, or turn the{" "}
           <TextLink href={paths.map3d}>3D globe</TextLink> to it.
         </p>
       </Section>

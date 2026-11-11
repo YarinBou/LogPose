@@ -10,9 +10,9 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import Link from "next/link";
-import { Globe, Maximize, Search, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Globe, Maximize, Search, ZoomIn, ZoomOut } from "lucide-react";
 import { DoskoiPandaMark } from "@/components/art/Sprites";
-import { LocationDetails, PoneglyphDetails } from "@/components/map/LocationDetails";
+import { LocationPopover, LocationSheet, type PanelSubject } from "@/components/map/LocationPanel";
 import { MapBase } from "@/components/map/MapBase";
 import {
   LAUGH_TALE_POINT,
@@ -33,6 +33,7 @@ import {
   type RegionId,
 } from "@/data/map";
 import { FOCUS_LOCATION_EVENT, type FocusLocationDetail } from "@/lib/events";
+import { useMediaQuery } from "@/lib/hooks";
 import { PLACE_COUNT } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
@@ -314,9 +315,27 @@ const REGION_CHIPS: (RegionId | "all")[] = [
 
 const INITIAL_VIEW: View = { cx: MAP_WIDTH / 2, cy: MAP_HEIGHT / 2, zoom: 1 };
 
+/** How the map moves when it is sent somewhere (as opposed to dragged). */
+const GLIDE = "transform 0.55s cubic-bezier(0.2, 0.8, 0.2, 1)";
+
+/**
+ * Where in the frame a selected island should come to rest, as fractions of its width and
+ * height. On a wide screen the popover opens to the island's right, so the island sits
+ * left of centre. On a phone the sheet covers the lower part of the screen, so it sits high.
+ */
+const REST_DESKTOP = { x: 0.3, y: 0.5 };
+const REST_MOBILE = { x: 0.5, y: 0.27 };
+
+/** Smallest scale (pixels per chart unit) to bring the map to when an island is picked. */
+const PICK_SCALE = 2.4;
+
 export function WorldMap() {
   const frameRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
+  const isDesktopRef = useRef(isDesktop);
+  isDesktopRef.current = isDesktop;
+  const [inView, setInView] = useState(true);
 
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const [view, setView] = useState<View>(INITIAL_VIEW);
@@ -361,8 +380,7 @@ export function WorldMap() {
     return () => observer.disconnect();
   }, []);
 
-  const ready = size.width > 0;
-  const fit = ready ? fitScale(size) : 1;
+  const fit = size.width > 0 ? fitScale(size) : 1;
   const scale = fit * view.zoom;
   const translateX = size.width / 2 - view.cx * scale;
   const translateY = size.height / 2 - view.cy * scale;
@@ -402,19 +420,78 @@ export function WorldMap() {
     [glideTo],
   );
 
+  /**
+   * Bring a chart point to its resting place in the frame (see REST_DESKTOP / REST_MOBILE),
+   * at no less than `minScale` pixels per chart unit. Never zooms out.
+   */
+  const bringIntoView = useCallback(
+    (px: number, py: number, minScale: number) => {
+      const current = sizeRef.current;
+      const base = fitScale(current);
+      const zoom = clamp(Math.max(viewRef.current.zoom, minScale / base), 1, MAX_SCALE / base);
+      const scaleAfter = base * zoom;
+      const rest = isDesktopRef.current ? REST_DESKTOP : REST_MOBILE;
+      glideTo({
+        cx: px - ((rest.x - 0.5) * current.width) / scaleAfter,
+        cy: py - ((rest.y - 0.5) * current.height) / scaleAfter,
+        zoom,
+      });
+      // On a phone the sheet covers the lower screen, so the map itself has to be on screen first.
+      if (!isDesktopRef.current) {
+        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        frameRef.current?.scrollIntoView({ behavior: reduce ? "instant" : "smooth", block: "start" });
+      }
+    },
+    [glideTo],
+  );
+
+  /** Select a place and travel to it. Used by search, the list, timeline cards and links. */
   const focusLocation = useCallback(
     (id: string) => {
       const location = PLACED_BY_ID.get(id);
       if (!location) return;
       setSelection({ kind: "location", id });
       setRegion("all");
-      const base = fitScale(sizeRef.current);
-      // Close enough to read the neighbours, and never zoom out from where the reader already is.
-      const zoom = Math.max(viewRef.current.zoom, (location.tier === 3 ? 6.5 : 4.2) / base);
-      glideTo({ cx: location.px, cy: location.py, zoom });
+      // Close enough to read the neighbours.
+      bringIntoView(location.px, location.py, location.tier === 3 ? 6.5 : 4.2);
     },
-    [glideTo],
+    [bringIntoView],
   );
+
+  const closePanel = useCallback(() => setSelection(null), []);
+
+  /* -- a link can open the map on a place: /?place=water-seven#map -- */
+  const ready = size.width > 0;
+  const openedFromLink = useRef(false);
+  useEffect(() => {
+    if (!ready || openedFromLink.current) return;
+    openedFromLink.current = true;
+    const place = new URLSearchParams(window.location.search).get("place");
+    if (!place || !PLACED_BY_ID.has(place)) return;
+    focusLocation(place);
+    // The reader arrived by link, so bring the map itself on screen (without animation:
+    // there is nothing on screen yet to travel from).
+    frameRef.current?.scrollIntoView({ behavior: "instant", block: isDesktopRef.current ? "center" : "start" });
+  }, [ready, focusLocation]);
+
+  // Keep the address in step with the selection, so the current island can be shared.
+  const selectedId = selection?.kind === "location" ? selection.id : null;
+  useEffect(() => {
+    if (!openedFromLink.current) return;
+    const url = new URL(window.location.href);
+    if (selectedId) url.searchParams.set("place", selectedId);
+    else url.searchParams.delete("place");
+    window.history.replaceState(window.history.state, "", url);
+  }, [selectedId]);
+
+  /* -- the phone sheet steps aside while the map is scrolled away -- */
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const observer = new IntersectionObserver(([entry]) => setInView(entry.isIntersecting), { threshold: 0.1 });
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, []);
 
   /* -- timeline cards can ask for a location -- */
   useEffect(() => {
@@ -491,10 +568,21 @@ export function WorldMap() {
     drag.current = null;
   }
 
-  const handleSelect = useCallback((next: Selection) => {
-    if (suppressClick.current) return;
-    setSelection(next);
-  }, []);
+  /** A marker was clicked or tapped: select it and travel to it. */
+  const handleSelect = useCallback(
+    (next: Selection) => {
+      if (suppressClick.current) return;
+      setSelection(next);
+      if (next?.kind === "location") {
+        const location = PLACED_BY_ID.get(next.id);
+        if (location) bringIntoView(location.px, location.py, PICK_SCALE);
+      } else if (next?.kind === "poneglyph") {
+        const stone = PLACED_PONEGLYPHS.find((entry) => entry.id === next.id);
+        if (stone) bringIntoView(stone.px, stone.py, PICK_SCALE);
+      }
+    },
+    [bringIntoView],
+  );
 
   const handleHover = useCallback((info: HoverInfo | null) => {
     if (drag.current?.moved) return;
@@ -505,6 +593,11 @@ export function WorldMap() {
   const selectedLocation = selection?.kind === "location" ? PLACED_BY_ID.get(selection.id) : undefined;
   const selectedStone = selection?.kind === "poneglyph" ? PLACED_PONEGLYPHS.find((s) => s.id === selection.id) : undefined;
   const selectedPoint = selectedLocation ?? selectedStone;
+  const subject: PanelSubject | null = selectedLocation
+    ? { kind: "location", location: selectedLocation }
+    : selectedStone
+      ? { kind: "poneglyph", stone: selectedStone }
+      : null;
 
   const results = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -605,7 +698,7 @@ export function WorldMap() {
             {/* chart */}
             <div
               ref={frameRef}
-              className="relative h-[58vh] max-h-[680px] min-h-[360px] overflow-hidden rounded-md bg-ocean-900 shadow-[inset_0_0_0_2px_rgba(0,0,0,0.5)]"
+              className="relative h-[58vh] max-h-[680px] min-h-[360px] scroll-mt-16 overflow-hidden rounded-md bg-ocean-900 shadow-[inset_0_0_0_2px_rgba(0,0,0,0.5)]"
             >
               {ready ? (
                 <svg
@@ -632,7 +725,7 @@ export function WorldMap() {
                     style={{
                       transform: `translate(${translateX}px, ${translateY}px) scale(${scale})`,
                       transformOrigin: "0 0",
-                      transition: gliding ? "transform 0.55s cubic-bezier(0.2, 0.8, 0.2, 1)" : "none",
+                      transition: gliding ? GLIDE : "none",
                     }}
                   >
                     <MapBase />
@@ -685,8 +778,19 @@ export function WorldMap() {
                 </div>
               )}
 
+              {/* details for the selected place: beside the island on wide screens */}
+              {ready && subject && selectedPoint && isDesktop ? (
+                <LocationPopover
+                  subject={subject}
+                  anchor={{ x: translateX + selectedPoint.px * scale, y: translateY + selectedPoint.py * scale }}
+                  frame={size}
+                  transition={gliding ? GLIDE : "none"}
+                  onClose={closePanel}
+                />
+              ) : null}
+
               {/* layer switches */}
-              <div className="absolute left-2 top-2 flex flex-wrap gap-1.5">
+              <div className="absolute left-2 top-2 flex max-w-[calc(100%-3.75rem)] flex-wrap gap-1.5">
                 {[
                   { label: "Course", on: showRoute, set: setShowRoute },
                   { label: "Poneglyphs", on: showPoneglyphs, set: setShowPoneglyphs },
@@ -709,8 +813,8 @@ export function WorldMap() {
                 ))}
               </div>
 
-              {/* zoom */}
-              <div className="absolute bottom-2 right-2 flex flex-col overflow-hidden rounded-md border border-gold-600/70 bg-ocean-950/85 text-parchment-100 backdrop-blur-sm">
+              {/* zoom: top corner on a phone, clear of the sheet that rises from the bottom */}
+              <div className="absolute right-2 top-2 flex flex-col overflow-hidden rounded-md border border-gold-600/70 bg-ocean-950/85 text-parchment-100 backdrop-blur-sm lg:bottom-2 lg:top-auto">
                 <button type="button" onClick={() => zoomBy(1.7)} aria-label="Zoom in" className="p-2 hover:bg-gold-400 hover:text-ink-900">
                   <ZoomIn className="h-4 w-4" />
                 </button>
@@ -745,23 +849,7 @@ export function WorldMap() {
             </div>
 
             {/* side panel */}
-            <aside className="parchment flex max-h-[680px] min-h-[220px] flex-col rounded-md p-4 lg:h-[58vh]" aria-live="polite">
-              {selectedLocation || selectedStone ? (
-                <div className="flex min-h-0 flex-1 flex-col">
-                  <button
-                    type="button"
-                    onClick={() => setSelection(null)}
-                    className="mb-2 inline-flex items-center gap-1 self-end text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-500 hover:text-ink-900"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                    Close
-                  </button>
-                  <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-                    {selectedLocation ? <LocationDetails location={selectedLocation} /> : null}
-                    {selectedStone ? <PoneglyphDetails stone={selectedStone} /> : null}
-                  </div>
-                </div>
-              ) : (
+            <aside className="parchment flex max-h-[420px] min-h-[220px] flex-col rounded-md p-4 lg:h-[58vh] lg:max-h-[680px]">
                 <div className="flex min-h-0 flex-1 flex-col">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-500">
                     {regionInfo ? `${regionPlaces.length} places` : "Ports of call"}
@@ -789,10 +877,12 @@ export function WorldMap() {
                     ))}
                   </ul>
                 </div>
-              )}
             </aside>
           </div>
         </div>
+
+        {/* details for the selected place: a bottom sheet on narrow screens */}
+        {ready && subject && !isDesktop ? <LocationSheet subject={subject} onClose={closePanel} visible={inView} /> : null}
       </div>
     </section>
   );

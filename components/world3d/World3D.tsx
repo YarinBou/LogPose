@@ -127,6 +127,17 @@ export function World3D() {
 
   const handleVoyageEnd = useCallback(() => setPlaying(false), []);
 
+  // Escape closes the details panel, as it does on the 2D map.
+  const hasSelection = selection !== null;
+  useEffect(() => {
+    if (!hasSelection) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelection(null);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [hasSelection]);
+
   const results = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (needle.length < 2) return [];
@@ -249,8 +260,8 @@ export function World3D() {
       {/* details of the selected place */}
       {selectedLocation || selectedStone ? (
         <aside
-          aria-live="polite"
-          className="parchment absolute inset-x-3 bottom-[5.75rem] z-20 flex max-h-[30svh] flex-col rounded-md p-3 sm:inset-x-auto sm:bottom-auto sm:right-4 sm:top-[4.5rem] sm:max-h-[calc(100svh-15rem)] sm:w-80 sm:p-4"
+          aria-label="Details for the selected place"
+          className="parchment absolute inset-x-3 bottom-[5.75rem] z-20 flex max-h-[30svh] flex-col rounded-md p-3 sm:inset-x-auto sm:bottom-auto sm:right-4 sm:top-[4.5rem] sm:max-h-[calc(100svh-15rem)] sm:w-[26rem] sm:p-4"
         >
           <button
             type="button"
