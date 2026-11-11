@@ -20,3 +20,7 @@ npm-debug.log*
 
 # vercel
 .vercel
+
+# blender: preview renders and backup files (the exported .glb models are committed)
+/tools/blender/previews/
+*.blend1
