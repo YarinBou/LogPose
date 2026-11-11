@@ -202,22 +202,27 @@ export function Hero() {
         </motion.p>
 
         <motion.h1
-          initial={{ opacity: 0, y: 24, scale: 0.96 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
+          initial={{ y: 24, scale: 0.96 }}
+          animate={{ y: 0, scale: 1 }}
           transition={{ delay: 0.45, duration: 0.9, ease: [0.2, 0.8, 0.2, 1] }}
-          className="gold-text mt-2 font-display text-7xl leading-[0.95] drop-shadow-[0_6px_18px_rgba(0,0,0,0.75)] sm:text-8xl md:text-9xl"
+          className="mt-2 flex flex-col items-center"
         >
-          LogPose
+          <span className="gold-text font-display text-7xl leading-[0.95] drop-shadow-[0_6px_18px_rgba(0,0,0,0.75)] sm:text-8xl md:text-9xl">
+            LogPose
+          </span>
+          <span className="text-shadow-deep mt-2 font-display text-2xl leading-none tracking-wide text-parchment-50 sm:text-3xl">
+            The One Piece Timeline &amp; World Map
+          </span>
         </motion.h1>
 
         <motion.p
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
+          initial={{ y: 16 }}
+          animate={{ y: 0 }}
           transition={{ delay: 0.7, duration: 0.8 }}
           className="text-shadow-deep mt-4 max-w-xl text-base leading-relaxed text-parchment-50 sm:text-lg"
         >
-          The voyage of the Straw Hat Pirates, arc by arc: from a rowing boat off Foosha Village to the last
-          island on the chart.
+          Every arc of the Straw Hat Pirates&apos; voyage in order, dated on the Sea Circle Calendar: from a rowing
+          boat off Foosha Village to the last island on the chart.
         </motion.p>
 
         <motion.a

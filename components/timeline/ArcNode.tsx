@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { motion, useReducedMotion } from "framer-motion";
 import { BookOpen, CalendarDays, Globe, MapPin, UserPlus, Users } from "lucide-react";
 import { StrawHatDachshund } from "@/components/art/Sprites";
@@ -85,6 +86,14 @@ export function ArcNode({ arc, number, side, setCode }: ArcNodeProps) {
             </button>
 
             <p className="mt-3 text-[15px] leading-relaxed text-ink-700">{arc.summary}</p>
+            <p className="mt-1.5">
+              <Link
+                href={`/arcs/${arc.id}`}
+                className="text-[13px] font-semibold text-ocean-700 underline decoration-ocean-700/40 underline-offset-2 hover:text-ocean-600"
+              >
+                {arc.name} arc: full log entry
+              </Link>
+            </p>
 
             {arc.inspiration ? (
               <p className="mt-3 flex items-start gap-2 border-l-2 border-gold-600/60 pl-2.5 text-[13px] leading-snug text-ink-700">

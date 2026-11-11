@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { BountyBadge } from "@/components/BountyBadge";
 import { SectionHeading } from "@/components/SectionHeading";
@@ -18,7 +19,12 @@ export function CrewManifest() {
     <section id="crew" className="relative z-10 scroll-mt-14 px-3 pb-24 pt-6 sm:px-6">
       <div className="mx-auto max-w-7xl">
         <SectionHeading kicker="Muster roll" title="The Crew">
-          Ten pirates, in the order they came aboard. Bounties are the latest issued, after the raid on Onigashima.
+          Ten pirates, in the order they came aboard. Bounties are the latest issued, after the raid on Onigashima. Each
+          poster opens that pirate&apos;s{" "}
+          <Link href="/crew" className="font-semibold text-gold-300 underline underline-offset-2">
+            bounty history
+          </Link>
+          .
         </SectionHeading>
 
         <ul className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-5">
@@ -42,7 +48,11 @@ export function CrewManifest() {
                 >
                   <span className="gold-text font-display text-6xl leading-none">{member.name.replace("Monkey D. ", "").charAt(0)}</span>
                 </div>
-                <h3 className="mt-2 font-display text-[22px] leading-none text-ink-900">{member.name}</h3>
+                <h3 className="mt-2 font-display text-[22px] leading-none text-ink-900">
+                  <Link href={`/crew/${id}`} className="hover:text-redline-600">
+                    {member.name}
+                  </Link>
+                </h3>
                 <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-redline-600">
                   {member.role} · &ldquo;{member.epithet}&rdquo;
                 </p>
