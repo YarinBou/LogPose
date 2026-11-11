@@ -12,6 +12,7 @@ import {
 import Link from "next/link";
 import { Globe, Maximize, Search, ZoomIn, ZoomOut } from "lucide-react";
 import { DoskoiPandaMark } from "@/components/art/Sprites";
+import { INK, IslandArt, IslandDefs, islandLook, VisitedPennant, type IslandLook } from "@/components/map/islands";
 import { LocationPopover, LocationSheet, type PanelSubject } from "@/components/map/LocationPanel";
 import { MapBase } from "@/components/map/MapBase";
 import {
@@ -31,7 +32,9 @@ import {
   REGIONS,
   type MapLocation,
   type RegionId,
+  type Tier,
 } from "@/data/map";
+import { arcsAtLocation } from "@/data/timeline";
 import { FOCUS_LOCATION_EVENT, type FocusLocationDetail } from "@/lib/events";
 import { useMediaQuery } from "@/lib/hooks";
 import { PLACE_COUNT } from "@/lib/site";
@@ -91,28 +94,44 @@ function clampView(view: View, size: Size): View {
 interface Placed extends MapLocation {
   px: number;
   py: number;
+  /** Outline, colours and drawing for this island, worked out once. */
+  look: IslandLook;
+  /** The crew calls here on the timeline. */
+  visited: boolean;
 }
 
 const PLACED: Placed[] = LOCATIONS.map((location) => ({
   ...location,
   px: mapX(location.x),
   py: mapY(location.y),
+  look: islandLook(location),
+  visited: arcsAtLocation(location.id).length > 0,
 }));
 
 const PLACED_BY_ID = new Map(PLACED.map((location) => [location.id, location]));
 
 const PLACED_PONEGLYPHS = PONEGLYPHS.map((stone) => ({ ...stone, px: mapX(stone.x), py: mapY(stone.y) }));
 
-const LABEL_PX: Record<1 | 2 | 3, number> = { 1: 12.5, 2: 11, 3: 10 };
-const DOT_PX: Record<1 | 2 | 3, number> = { 1: 4.6, 2: 3.3, 3: 2.5 };
+/** Island radius on screen, in pixels, with the whole world in view. */
+const ISLE_PX: Record<Tier, number> = { 1: 10, 2: 6.6, 3: 4 };
+const LABEL_PX: Record<Tier, number> = { 1: 15.5, 2: 13, 3: 11.5 };
+
+/**
+ * Islands grow as the chart is zoomed in, but more slowly than the chart itself: they are
+ * symbols, not land to scale, so a close view shows bigger drawings with more sea between.
+ */
+function isleRadius(tier: Tier, scale: number): number {
+  return ISLE_PX[tier] * clamp(Math.sqrt(scale), 1, 2.6);
+}
 
 type LabelSide = "right" | "left";
 
 /**
- * Decide which names fit. Landmarks go first, then notable places, then minor ones as the
- * zoom allows. A name is placed to the right of its dot, or to the left if that is taken,
- * and dropped if both spots collide with a name already placed. Positions are worked out in
- * screen pixels, which depend on the scale but not on where the map is panned.
+ * Decide which names fit. Landmarks go first and are always tried; notable places join as
+ * the chart is zoomed in, and minor ones only close up. A name is placed to the right of
+ * its island, or to the left if that is taken, and dropped if both spots collide with a
+ * name already placed. Positions are worked out in screen pixels, which depend on the
+ * scale but not on where the map is panned.
  */
 function chooseLabels(scale: number, visible: Placed[]): Map<string, LabelSide> {
   const chosen = new Map<string, LabelSide>();
@@ -124,11 +143,12 @@ function chooseLabels(scale: number, visible: Placed[]): Map<string, LabelSide> 
 
   for (const location of candidates) {
     const font = LABEL_PX[location.tier];
-    const width = location.name.length * font * 0.56 + 6;
-    const height = font + 3;
+    // The display face is narrow: about 0.47 of its size per character.
+    const width = location.name.length * font * 0.47 + 8;
+    const height = font + 2;
     const sx = location.px * scale;
     const top = location.py * scale - height / 2;
-    const gap = DOT_PX[location.tier] + 4;
+    const gap = isleRadius(location.tier, scale) + 5;
 
     for (const side of ["right", "left"] as const) {
       const left = side === "right" ? sx + gap : sx - gap - width;
@@ -151,9 +171,89 @@ interface HoverInfo {
   name: string;
   px: number;
   py: number;
+  /** How far above the point the name should sit, in pixels. */
+  lift: number;
 }
 
 type Selection = { kind: "location"; id: string } | { kind: "poneglyph"; id: string } | null;
+
+interface IslandProps {
+  site: Placed;
+  scale: number;
+  /** Which side the name goes on, or undefined when there is no room for it. */
+  side: LabelSide | undefined;
+  dimmed: boolean;
+  selected: boolean;
+  onHover: (info: HoverInfo | null) => void;
+  onSelect: (selection: Selection) => void;
+}
+
+/**
+ * One island on the chart: a hit area, the drawing, a pennant if the crew visits, and its
+ * name. Memoised, so selecting an island re-renders that island and the one let go, not
+ * the other three hundred.
+ */
+const Island = memo(function Island({ site, scale, side, dimmed, selected, onHover, onSelect }: IslandProps) {
+  const u = 1 / scale;
+  const radius = isleRadius(site.tier, scale);
+  const font = LABEL_PX[site.tier] * u;
+
+  return (
+    <g
+      transform={`translate(${site.px} ${site.py})`}
+      data-marker=""
+      className={cn("isle", selected && "is-selected")}
+      opacity={dimmed ? 0.22 : 1}
+      onPointerEnter={() => onHover({ name: site.name, px: site.px, py: site.py, lift: radius + 8 })}
+      onPointerLeave={() => onHover(null)}
+      onClick={() => onSelect({ kind: "location", id: site.id })}
+    >
+      {/* generous hit area: never smaller than a fingertip-sized target */}
+      <circle r={Math.max(radius + 4, 12) * u} fill="transparent" />
+
+      {site.faction ? (
+        <rect
+          x={-3.4 * u}
+          y={-3.4 * u}
+          width={6.8 * u}
+          height={6.8 * u}
+          transform="rotate(45)"
+          fill="#cf4034"
+          stroke="#fbf4e1"
+          strokeWidth={0.9 * u}
+        />
+      ) : (
+        // The outer group sizes the drawing; the inner one is left free for CSS to move.
+        <g transform={`scale(${radius * u})`}>
+          <g className="isle-body">
+            <IslandArt look={site.look} tier={site.tier} destroyed={site.destroyed} unplaced={site.unplaced} />
+            {site.visited ? <VisitedPennant /> : null}
+          </g>
+        </g>
+      )}
+
+      {side ? (
+        <text
+          x={(side === "right" ? 1 : -1) * (radius + 5) * u}
+          y={font * 0.33}
+          textAnchor={side === "right" ? "start" : "end"}
+          fontSize={font}
+          fontFamily="var(--font-display)"
+          letterSpacing={0.3 * u}
+          fill={site.destroyed ? "#5a4a3a" : INK}
+          // A halo of chart paper keeps the name readable over sea, routes and other islands.
+          stroke="#f4e6c3"
+          strokeWidth={3.4 * u}
+          strokeLinejoin="round"
+          paintOrder="stroke"
+          className="isle-label pointer-events-none select-none"
+        >
+          {site.name}
+        </text>
+      ) : null}
+    </g>
+  );
+});
 
 interface MapLayersProps {
   scale: number;
@@ -161,14 +261,16 @@ interface MapLayersProps {
   showRoute: boolean;
   showPoneglyphs: boolean;
   showFactions: boolean;
+  /** Id of the selected location, if a location is selected. */
+  selectedId: string | null;
   onHover: (info: HoverInfo | null) => void;
   onSelect: (selection: Selection) => void;
 }
 
 /**
- * Routes, markers and names. Everything is sized in screen pixels divided by the scale, so
- * dots and text stay the same size on screen while the chart underneath grows. Memoised:
- * panning only moves the parent group and never re-renders this layer.
+ * Routes, islands and names. Everything is sized in screen pixels divided by the scale, so
+ * drawings and text keep a sensible size on screen while the chart underneath grows.
+ * Memoised: panning only moves the parent group and never re-renders this layer.
  */
 const MapLayers = memo(function MapLayers({
   scale,
@@ -176,10 +278,15 @@ const MapLayers = memo(function MapLayers({
   showRoute,
   showPoneglyphs,
   showFactions,
+  selectedId,
   onHover,
   onSelect,
 }: MapLayersProps) {
-  const visible = useMemo(() => PLACED.filter((l) => showFactions || !l.faction), [showFactions]);
+  // Small islands are drawn first, so landmarks and their names sit on top.
+  const visible = useMemo(
+    () => PLACED.filter((l) => showFactions || !l.faction).sort((a, b) => b.tier - a.tier),
+    [showFactions],
+  );
   const labelPool = useMemo(
     () => (region === "all" ? visible : visible.filter((l) => l.region === region)),
     [visible, region],
@@ -208,6 +315,19 @@ const MapLayers = memo(function MapLayers({
         </g>
       ) : null}
 
+      {visible.map((site) => (
+        <Island
+          key={site.id}
+          site={site}
+          scale={scale}
+          side={labels.get(site.id)}
+          dimmed={region !== "all" && site.region !== region}
+          selected={site.id === selectedId}
+          onHover={onHover}
+          onSelect={onSelect}
+        />
+      ))}
+
       {showPoneglyphs
         ? PLACED_PONEGLYPHS.map((stone) => (
             <g
@@ -215,83 +335,23 @@ const MapLayers = memo(function MapLayers({
               transform={`translate(${stone.px} ${stone.py})`}
               data-marker=""
               className="cursor-pointer"
-              onPointerEnter={() => onHover({ name: stone.name, px: stone.px, py: stone.py })}
+              onPointerEnter={() => onHover({ name: stone.name, px: stone.px, py: stone.py, lift: 12 })}
               onPointerLeave={() => onHover(null)}
               onClick={() => onSelect({ kind: "poneglyph", id: stone.id })}
             >
-              <rect x={-8 * u} y={-8 * u} width={16 * u} height={16 * u} fill="transparent" />
+              <rect x={-9 * u} y={-9 * u} width={18 * u} height={18 * u} fill="transparent" />
               <rect
-                x={-3.6 * u}
-                y={-3.6 * u}
-                width={7.2 * u}
-                height={7.2 * u}
+                x={-3.8 * u}
+                y={-3.8 * u}
+                width={7.6 * u}
+                height={7.6 * u}
                 fill={stone.road ? "#cf4034" : "#3f4a5c"}
                 stroke="#fbf4e1"
-                strokeWidth={0.9 * u}
+                strokeWidth={1 * u}
               />
             </g>
           ))
         : null}
-
-      {visible.map((location) => {
-        const dimmed = region !== "all" && location.region !== region;
-        const r = DOT_PX[location.tier] * u;
-        const side = labels.get(location.id);
-        const font = LABEL_PX[location.tier] * u;
-        const fill = location.tier === 1 ? "#ecc14f" : location.tier === 2 ? "#fbf4e1" : "#a9dcea";
-
-        return (
-          <g
-            key={location.id}
-            transform={`translate(${location.px} ${location.py})`}
-            data-marker=""
-            opacity={dimmed ? 0.2 : 1}
-            className="cursor-pointer"
-            onPointerEnter={() => onHover({ name: location.name, px: location.px, py: location.py })}
-            onPointerLeave={() => onHover(null)}
-            onClick={() => onSelect({ kind: "location", id: location.id })}
-          >
-            <circle r={9 * u} fill="transparent" />
-            {location.faction ? (
-              <rect x={-r} y={-r} width={r * 2} height={r * 2} transform="rotate(45)" fill="#cf4034" stroke="#fbf4e1" strokeWidth={0.8 * u} />
-            ) : (
-              <circle
-                r={r}
-                fill={location.unplaced ? "rgba(3,21,35,0.55)" : fill}
-                stroke={location.unplaced ? fill : "#031523"}
-                strokeWidth={(location.unplaced ? 1.1 : 0.9) * u}
-                strokeDasharray={location.unplaced ? `${1.6 * u} ${1.2 * u}` : undefined}
-              />
-            )}
-            {location.destroyed ? (
-              <path
-                d={`M${-r * 1.5} ${-r * 1.5}L${r * 1.5} ${r * 1.5}M${r * 1.5} ${-r * 1.5}L${-r * 1.5} ${r * 1.5}`}
-                stroke="#cf4034"
-                strokeWidth={1.3 * u}
-                strokeLinecap="round"
-              />
-            ) : null}
-            {side ? (
-              <text
-                x={(side === "right" ? 1 : -1) * (DOT_PX[location.tier] + 4) * u}
-                y={font * 0.34}
-                textAnchor={side === "right" ? "start" : "end"}
-                fontSize={font}
-                fontFamily="var(--font-sans)"
-                fontWeight={location.tier === 1 ? 700 : 500}
-                fill={location.tier === 1 ? "#fbeab0" : "#f4e6c3"}
-                stroke="#031523"
-                strokeWidth={3 * u}
-                strokeLinejoin="round"
-                paintOrder="stroke"
-                className="pointer-events-none select-none"
-              >
-                {location.name}
-              </text>
-            ) : null}
-          </g>
-        );
-      })}
     </g>
   );
 });
@@ -593,6 +653,8 @@ export function WorldMap() {
   const selectedLocation = selection?.kind === "location" ? PLACED_BY_ID.get(selection.id) : undefined;
   const selectedStone = selection?.kind === "poneglyph" ? PLACED_PONEGLYPHS.find((s) => s.id === selection.id) : undefined;
   const selectedPoint = selectedLocation ?? selectedStone;
+  /** Radius of the ring drawn round the selection, in pixels: just outside the island's foam. */
+  const selectedRadius = selectedLocation && !selectedLocation.faction ? isleRadius(selectedLocation.tier, scale) * 1.3 + 6 : 13;
   const subject: PanelSubject | null = selectedLocation
     ? { kind: "location", location: selectedLocation }
     : selectedStone
@@ -721,6 +783,7 @@ export function WorldMap() {
                     if (!(event.target as Element).closest("[data-marker]")) setSelection(null);
                   }}
                 >
+                  <IslandDefs />
                   <g
                     style={{
                       transform: `translate(${translateX}px, ${translateY}px) scale(${scale})`,
@@ -735,31 +798,29 @@ export function WorldMap() {
                       showRoute={showRoute}
                       showPoneglyphs={showPoneglyphs}
                       showFactions={showFactions}
+                      selectedId={selectedId}
                       onHover={handleHover}
                       onSelect={handleSelect}
                     />
 
+                    {/* the selected place: a glowing ring around it */}
                     {selectedPoint ? (
                       <g transform={`translate(${selectedPoint.px} ${selectedPoint.py})`} className="pointer-events-none">
-                        <circle r={11 * u} fill="none" stroke="#fbeab0" strokeWidth={2 * u} />
-                        <circle r={11 * u} fill="none" stroke="#fbeab0" strokeWidth={1.5 * u} opacity="0.7">
-                          <animate attributeName="r" from={11 * u} to={24 * u} dur="1.6s" repeatCount="indefinite" />
-                          <animate attributeName="opacity" from="0.7" to="0" dur="1.6s" repeatCount="indefinite" />
-                        </circle>
+                        <circle className="isle-glow" r={selectedRadius * u} fill="none" stroke="#fbeab0" strokeWidth={2.2 * u} />
                       </g>
                     ) : null}
 
+                    {/* the name of whatever is under the pointer, for places too crowded to label */}
                     {hover ? (
                       <text
                         x={hover.px}
-                        y={hover.py - 12 * u}
+                        y={hover.py - hover.lift * u}
                         textAnchor="middle"
-                        fontSize={13 * u}
-                        fontFamily="var(--font-sans)"
-                        fontWeight={700}
-                        fill="#ffffff"
-                        stroke="#031523"
-                        strokeWidth={4 * u}
+                        fontSize={16 * u}
+                        fontFamily="var(--font-display)"
+                        fill={INK}
+                        stroke="#fbf4e1"
+                        strokeWidth={4.5 * u}
                         strokeLinejoin="round"
                         paintOrder="stroke"
                         className="pointer-events-none select-none"
@@ -829,12 +890,19 @@ export function WorldMap() {
               {/* legend */}
               <ul className="absolute bottom-2 left-2 hidden max-w-[70%] flex-wrap gap-x-3 gap-y-1 rounded-md bg-ocean-950/75 px-2.5 py-1.5 text-[10.5px] text-parchment-100 backdrop-blur-sm sm:flex">
                 <li className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-gold-400" />
-                  Story landmark
+                  <svg viewBox="-0.2 -1.4 1.4 1.7" className="h-3 w-3" aria-hidden="true">
+                    <path d="M0 0.2V-1.2" stroke="#fbf4e1" strokeWidth="0.16" strokeLinecap="round" />
+                    <path d="M0-1.2L1-0.82L0-0.44Z" fill="#ecc14f" />
+                  </svg>
+                  Visited by the crew
                 </li>
                 <li className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full border border-dashed border-parchment-100" />
+                  <span className="h-2.5 w-2.5 rounded-full border border-dashed border-parchment-100 bg-parchment-100/30" />
                   Position unconfirmed
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full border border-ink-900 bg-[#97948c]" />
+                  Destroyed
                 </li>
                 <li className="flex items-center gap-1.5">
                   <span className="h-2 w-2 bg-redline-400 ring-1 ring-parchment-100" />

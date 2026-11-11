@@ -195,6 +195,33 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
+/* Islands on the 2D chart                                              */
+/* ------------------------------------------------------------------ */
+
+.isle {
+  cursor: pointer;
+}
+
+/* The drawing is moved by CSS, about its own centre rather than the chart's origin. */
+.isle-body {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* Hover: the ink outline lightens. Selected: it turns gold, inside a glowing ring. */
+.isle:hover .isle-ink {
+  stroke: var(--color-gold-200);
+}
+
+.isle.is-selected .isle-ink {
+  stroke: var(--color-gold-300);
+}
+
+.isle-glow {
+  filter: drop-shadow(0 0 3px rgba(251, 234, 176, 0.95)) drop-shadow(0 0 7px rgba(236, 193, 79, 0.6));
+}
+
+/* ------------------------------------------------------------------ */
 /* Motion                                                               */
 /* ------------------------------------------------------------------ */
 

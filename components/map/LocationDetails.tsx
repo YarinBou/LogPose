@@ -65,18 +65,18 @@ function StatCard({ label, value, tone = "plain", icon }: { label: string; value
   return (
     <div
       className={cn(
-        "flex min-w-0 flex-col justify-between rounded-md border px-2.5 py-2",
+        "flex min-w-0 flex-col justify-between rounded-md border px-2 py-2",
         tone === "plain" && "border-ink-500/25 bg-parchment-50/70",
         // Episode and chapter are told apart by colour, icon and a tinted edge, not colour alone.
         tone === "anime" && "border-ocean-600/45 border-l-4 border-l-ocean-600 bg-ocean-500/10",
         tone === "manga" && "border-redline-600/45 border-l-4 border-l-redline-600 bg-redline-500/10",
       )}
     >
-      <dt className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-500">
+      <dt className="flex items-center gap-1 whitespace-nowrap text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-500">
         {icon}
         {label}
       </dt>
-      <dd className={cn("mt-0.5 break-words font-display leading-tight text-ink-900", value.length > 11 ? "text-[15px]" : "text-xl")}>{value}</dd>
+      <dd className={cn("mt-0.5 break-words font-display leading-tight text-ink-900", value.length > 9 ? "text-[15px]" : "text-xl")}>{value}</dd>
     </div>
   );
 }
@@ -192,10 +192,10 @@ export function LocationDetails({ location, arcHrefBase = "", headingId }: Locat
   if (location.saga) stats.push({ label: "Saga", value: location.saga.replace(" Saga", "") });
   if (location.arc) stats.push({ label: "Arc", value: location.arc });
   if (location.firstAnimeEpisode) {
-    stats.push({ label: "First episode", value: `Ep. ${location.firstAnimeEpisode}`, tone: "anime", icon: <Tv className="h-3 w-3" aria-hidden="true" /> });
+    stats.push({ label: "1st episode", value: `Ep. ${location.firstAnimeEpisode}`, tone: "anime", icon: <Tv className="h-3 w-3" aria-hidden="true" /> });
   }
   if (location.firstMangaChapter) {
-    stats.push({ label: "First chapter", value: `Ch. ${location.firstMangaChapter}`, tone: "manga", icon: <BookOpen className="h-3 w-3" aria-hidden="true" /> });
+    stats.push({ label: "1st chapter", value: `Ch. ${location.firstMangaChapter}`, tone: "manga", icon: <BookOpen className="h-3 w-3" aria-hidden="true" /> });
   } else if (arcs.length > 0) {
     // No first-appearance chapter on record: the arc's own chapter range is still exact.
     stats.push({ label: "Arc chapters", value: arcs[0].chapters.replace("Ch. ", ""), tone: "manga", icon: <BookOpen className="h-3 w-3" aria-hidden="true" /> });

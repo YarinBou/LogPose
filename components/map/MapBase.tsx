@@ -50,6 +50,20 @@ export const MapBase = memo(function MapBase() {
           <rect width="14" height="14" fill="rgba(211,238,245,0.10)" />
           <rect width="14" height="1.4" fill="rgba(211,238,245,0.22)" />
         </pattern>
+        {/* Chart paper: a scatter of faint fibres and specks over the sea. Plain shapes, not a
+            filter, so panning the map never has to redraw a texture. */}
+        <pattern id="map-paper" width="90" height="90" patternUnits="userSpaceOnUse" patternTransform="rotate(11)">
+          <g stroke="#fbf4e1" strokeLinecap="round" opacity="0.07">
+            <path d="M6 14l9 2M40 8l7-3M70 22l10 1M22 44l-8 3M58 52l9-2M12 76l8 1M46 80l-7 2M80 66l6-3" strokeWidth="0.9" />
+          </g>
+          <g fill="#031523" opacity="0.1">
+            <circle cx="30" cy="20" r="0.9" />
+            <circle cx="64" cy="38" r="0.7" />
+            <circle cx="14" cy="58" r="0.8" />
+            <circle cx="78" cy="84" r="0.9" />
+            <circle cx="48" cy="64" r="0.6" />
+          </g>
+        </pattern>
         <pattern id="map-rock" width="26" height="40" patternUnits="userSpaceOnUse">
           <path d="M0 9 9 5 17 11 26 7M0 29 8 33 18 27 26 31" fill="none" stroke="rgba(0,0,0,0.38)" strokeWidth="1.2" />
         </pattern>
@@ -60,6 +74,8 @@ export const MapBase = memo(function MapBase() {
       <rect x={0} y={0} width={HALF} height={BAND_TOP} fill="#0b2a45" opacity="0.28" />
       <rect x={HALF} y={BAND_BOTTOM} width={HALF} height={MAP_HEIGHT - BAND_BOTTOM} fill="#0b2a45" opacity="0.22" />
       <rect x={0} y={BAND_BOTTOM} width={HALF} height={MAP_HEIGHT - BAND_BOTTOM} fill="#06243a" opacity="0.34" />
+
+      <rect width={MAP_WIDTH} height={MAP_HEIGHT} fill="url(#map-paper)" />
 
       {/* chart grid */}
       <g stroke="rgba(211,238,245,0.07)" strokeWidth="1">
