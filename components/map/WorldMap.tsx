@@ -33,6 +33,7 @@ import {
   type RegionId,
 } from "@/data/map";
 import { FOCUS_LOCATION_EVENT, type FocusLocationDetail } from "@/lib/events";
+import { PLACE_COUNT } from "@/lib/site";
 import { cn } from "@/lib/utils";
 
 /* ------------------------------------------------------------------ */
@@ -526,7 +527,7 @@ export function WorldMap() {
     <section id="map" className="relative z-10 scroll-mt-14 px-3 pb-28 pt-10 sm:px-6">
       <div className="mx-auto max-w-7xl">
         <SectionHeading kicker="Cartography" title="The World Map">
-          The Red Line and the Grand Line cut the world into four Blues. {LOCATIONS.length} places from the Library of
+          The Red Line and the Grand Line cut the world into four Blues. {PLACE_COUNT} places from the Library of
           Ohara&apos;s map are charted here, with the Straw Hats&apos; course drawn across them.
         </SectionHeading>
 
@@ -537,6 +538,12 @@ export function WorldMap() {
           >
             <Globe className="h-4 w-4" />
             See it as a globe: 3D World Map
+          </Link>{" "}
+          <Link
+            href="/locations"
+            className="inline-flex items-center gap-2 rounded-full border border-gold-500/60 bg-ocean-950/60 px-4 py-1.5 text-[12px] font-semibold uppercase tracking-[0.12em] text-parchment-100 backdrop-blur-sm transition-colors hover:border-gold-300 hover:text-gold-300"
+          >
+            All locations as a list
           </Link>
         </p>
 

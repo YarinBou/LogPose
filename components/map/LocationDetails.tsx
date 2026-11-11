@@ -1,5 +1,7 @@
+import Link from "next/link";
 import { regionName, type MapLocation, type Poneglyph } from "@/data/map";
 import { arcsAtLocation } from "@/data/timeline";
+import { isLandmark, paths } from "@/lib/content";
 
 interface DetailsProps {
   /**
@@ -23,6 +25,16 @@ export function LocationDetails({ location, arcHrefBase = "" }: DetailsProps & {
       <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-500">{regionName(location.region)}</p>
       <h3 className="mt-0.5 font-display text-4xl leading-none text-ink-900">{location.name}</h3>
       <p className="mt-1.5 text-sm text-ink-700">{location.note}</p>
+      {isLandmark(location.id) ? (
+        <p className="mt-1.5">
+          <Link
+            href={paths.location(location.id)}
+            className="text-[13px] font-semibold text-ocean-700 underline decoration-ocean-700/40 underline-offset-2 hover:text-ocean-600"
+          >
+            About {location.name}
+          </Link>
+        </p>
+      ) : null}
 
       {tags.length > 0 ? (
         <ul className="mt-2 flex flex-wrap gap-1.5">

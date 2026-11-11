@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { SectionHeading } from "@/components/SectionHeading";
 import { ArcNode } from "@/components/timeline/ArcNode";
@@ -80,7 +81,11 @@ export function GrandTimeline() {
       <div className="mx-auto max-w-7xl">
         <SectionHeading kicker="Chronicle" title="The Grand Timeline">
           Every arc in sailing order, dated on the Sea Circle Calendar as the Library of Ohara reconstructs it. Follow the
-          Sunny down the page.
+          Sunny down the page, or read{" "}
+          <Link href="/arcs" className="font-semibold text-gold-300 underline underline-offset-2">
+            all arcs in order as a list
+          </Link>
+          .
         </SectionHeading>
 
         <nav aria-label="Sagas" className="mx-auto mt-8 flex max-w-4xl flex-wrap justify-center gap-2">

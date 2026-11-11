@@ -36,3 +36,8 @@ export function usePandamanHunt(): PandamanHunt {
   }
   return context;
 }
+
+/** Like usePandamanHunt, but returns null on pages that have no hunt (the reference pages). */
+export function usePandamanHuntOptional(): PandamanHunt | null {
+  return useContext(PandamanHuntContext);
+}

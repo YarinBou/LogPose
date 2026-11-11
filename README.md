@@ -7,9 +7,30 @@ An interactive, Next.js-powered chronicle of the One Piece timeline, lore, and g
 - **Hero**: the entrance to the Grand Line (Red Line, Calm Belts, four Blues) with a waving Jolly Roger and a "Set Sail" button.
 - **The Grand Timeline**: every arc in sailing order, grouped by saga, dated on the Sea Circle Calendar. A miniature Thousand Sunny follows an SVG course down the page as you scroll.
 - **The Crew**: wanted posters with current bounties.
-- **The World Map**: an abstract SVG chart with about 330 named places, the Poneglyphs, and the Straw Hats' course. Pan, zoom, search, and filter by sea.
+- **The World Map**: an abstract SVG chart with 279 named places, the Poneglyphs, and the Straw Hats' course. Pan, zoom, search, and filter by sea.
 - **The 3D World Map** (`/3d-world-map`): the same world as a three.js globe. The Red Line rings the poles, the Grand Line is the equator, story landmarks are Blender-built islands, and the Thousand Sunny sails the course arc by arc.
 - **Easter eggs**: three hidden Pandamen, the Alabasta "X" cursor, Usopp's Lies Tracker, "Waraibanashi" at Laugh Tale, a dachshund in a straw hat, Doskoi Panda and Criminal brand marks, and Minatomo on the 404 page.
+
+## Reference pages and SEO
+
+Besides the interactive pages, every arc, saga, crew member and landmark has its own static page, generated from the same data:
+
+- `/arcs` and `/arcs/[arc]`: all arcs in order, then one page per arc (date, chapters, setting, who joined, bounties).
+- `/sagas/[saga]`: each saga with its arcs.
+- `/crew` and `/crew/[member]`: the crew, then one page per member with bounty history.
+- `/locations` and `/locations/[location]`: every charted place by sea, then one page per landmark.
+
+For search engines and AI assistants the site also serves `sitemap.xml`, `robots.txt` (AI crawlers explicitly allowed), a web manifest, generated share images, JSON-LD structured data on every page, and two plain-text exports: `/llms.txt` (a guide to the site) and `/llms-full.txt` (the whole dataset as Markdown).
+
+Environment variables (all optional):
+
+| Variable | Purpose |
+| --- | --- |
+| `NEXT_PUBLIC_SITE_URL` | Public address, such as `https://example.com`. Set it when a custom domain is attached. On Vercel the production domain is used automatically. |
+| `GOOGLE_SITE_VERIFICATION` | Verification code from Google Search Console. |
+| `BING_SITE_VERIFICATION` | Verification code from Bing Webmaster Tools. |
+
+Page views are measured with Vercel Analytics (`@vercel/analytics`); enable Analytics for the project in the Vercel dashboard to see them.
 
 ## Data and sources
 
