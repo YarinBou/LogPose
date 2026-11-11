@@ -1,0 +1,317 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-display: var(--font-pirata), "Pirata One", "Luminari", Georgia, serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@theme {
+  --color-parchment-50: #fbf4e1;
+  --color-parchment-100: #f4e6c3;
+  --color-parchment-200: #ead5a4;
+  --color-parchment-300: #dbbf85;
+  --color-parchment-400: #c6a465;
+
+  --color-ink-900: #24170b;
+  --color-ink-700: #3f2b16;
+  --color-ink-500: #6a4c2b;
+  --color-ink-300: #9a7a52;
+
+  --color-ocean-950: #031523;
+  --color-ocean-900: #06243a;
+  --color-ocean-800: #0a3551;
+  --color-ocean-700: #0f4b6e;
+  --color-ocean-600: #15698d;
+  --color-ocean-500: #2089ad;
+  --color-ocean-300: #7cc6dc;
+  --color-ocean-100: #d3eef5;
+
+  --color-wood-950: #1c1109;
+  --color-wood-900: #2a1a0d;
+  --color-wood-800: #3d2613;
+  --color-wood-700: #55361c;
+  --color-wood-600: #6f4826;
+  --color-wood-500: #8a5d33;
+
+  --color-gold-200: #fbeab0;
+  --color-gold-300: #f6dc8b;
+  --color-gold-400: #ecc14f;
+  --color-gold-500: #d4a437;
+  --color-gold-600: #b08424;
+  --color-gold-700: #8a6418;
+
+  --color-redline-400: #cf4034;
+  --color-redline-500: #b3261e;
+  --color-redline-600: #94191a;
+  --color-redline-700: #701214;
+  --color-redline-800: #4d0c0e;
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 4.5rem;
+  background: var(--color-ocean-950);
+  /* Cards slide in from the side; clip them while they wait so the page never scrolls sideways. */
+  overflow-x: clip;
+}
+
+body {
+  color: var(--color-parchment-50);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: var(--color-gold-400);
+  color: var(--color-ink-900);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-gold-400);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Materials                                                            */
+/* ------------------------------------------------------------------ */
+
+/* Aged parchment: paper grain plus stains that darken toward the edges. */
+.parchment {
+  color: var(--color-ink-900);
+  background-color: var(--color-parchment-100);
+  background-image:
+    radial-gradient(ellipse at 18% 8%, rgba(255, 252, 235, 0.55), transparent 52%),
+    radial-gradient(ellipse at 88% 94%, rgba(122, 74, 22, 0.24), transparent 58%),
+    radial-gradient(ellipse at 2% 98%, rgba(122, 74, 22, 0.2), transparent 46%),
+    radial-gradient(ellipse at 96% 4%, rgba(122, 74, 22, 0.16), transparent 42%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .36  0 0 0 0 .23  0 0 0 0 .08  0 0 0 .2 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  box-shadow:
+    inset 0 0 46px rgba(112, 66, 20, 0.34),
+    0 18px 40px -18px rgba(0, 0, 0, 0.75);
+}
+
+/* Weathered planks: seams every 96px, fine grain, darker toward the bottom. */
+.wood {
+  background-color: var(--color-wood-700);
+  background-image:
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.3) 0 2px, transparent 2px 96px),
+    repeating-linear-gradient(0deg, rgba(255, 235, 200, 0.035) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(3deg, rgba(0, 0, 0, 0.07) 0 2px, transparent 2px 23px),
+    linear-gradient(180deg, var(--color-wood-600), var(--color-wood-800));
+}
+
+/* Gold edging that survives rounded corners (border-image would not). */
+.gold-trim {
+  box-shadow:
+    0 0 0 1px var(--color-gold-700),
+    0 0 0 3px var(--color-gold-400),
+    0 0 0 4px var(--color-gold-700),
+    0 14px 34px -12px rgba(0, 0, 0, 0.8);
+}
+
+.gold-text {
+  background: linear-gradient(180deg, var(--color-gold-200) 0%, var(--color-gold-400) 45%, var(--color-gold-600) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.text-shadow-deep {
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.55),
+    0 6px 22px rgba(0, 0, 0, 0.7);
+}
+
+/* ------------------------------------------------------------------ */
+/* Easter egg: the Alabasta "X"                                         */
+/* ------------------------------------------------------------------ */
+
+.cursor-alabasta-x,
+.cursor-alabasta-x * {
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath d='M7 7 25 25M25 7 7 25' stroke='%23ffffff' stroke-width='9' stroke-linecap='round'/%3E%3Cpath d='M7 7 25 25M25 7 7 25' stroke='%231f6fe0' stroke-width='5.5' stroke-linecap='round'/%3E%3C/svg%3E")
+      16 16,
+    crosshair !important;
+}
+
+/* ------------------------------------------------------------------ */
+/* TCG alternate-art foil                                               */
+/* ------------------------------------------------------------------ */
+
+.tcg-card {
+  --mx: 50%;
+  --my: 50%;
+  --foil: 0;
+  transform-style: preserve-3d;
+}
+
+/* Rainbow sheen that slides with the pointer. */
+.tcg-foil {
+  opacity: calc(var(--foil) * 0.85);
+  background-image:
+    repeating-linear-gradient(
+      115deg,
+      rgba(255, 60, 140, 0.55) 0%,
+      rgba(255, 210, 60, 0.55) 9%,
+      rgba(70, 255, 190, 0.55) 18%,
+      rgba(60, 170, 255, 0.55) 27%,
+      rgba(190, 90, 255, 0.55) 36%,
+      rgba(255, 60, 140, 0.55) 45%
+    ),
+    repeating-linear-gradient(
+      -28deg,
+      rgba(255, 255, 255, 0) 0 6px,
+      rgba(255, 255, 255, 0.14) 6px 7px
+    );
+  background-size:
+    260% 260%,
+    100% 100%;
+  background-position:
+    var(--mx) var(--my),
+    0 0;
+  mix-blend-mode: color-dodge;
+  transition: opacity 0.35s ease;
+}
+
+/* The bright spot directly under the pointer. */
+.tcg-glare {
+  opacity: var(--foil);
+  background: radial-gradient(
+    circle at var(--mx) var(--my),
+    rgba(255, 255, 255, 0.85) 0%,
+    rgba(255, 255, 255, 0.28) 22%,
+    rgba(255, 255, 255, 0) 55%
+  );
+  mix-blend-mode: overlay;
+  transition: opacity 0.35s ease;
+}
+
+/* Manga halftone dots inside the art window. */
+.halftone {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.22) 1.1px, transparent 1.3px);
+  background-size: 7px 7px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Motion                                                               */
+/* ------------------------------------------------------------------ */
+
+@keyframes flag-wave {
+  from {
+    transform: translateY(calc(var(--amp) * -1));
+  }
+  to {
+    transform: translateY(var(--amp));
+  }
+}
+
+@keyframes drift-left {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-3deg);
+  }
+  50% {
+    transform: translateY(-5px) rotate(3deg);
+  }
+}
+
+@keyframes hammer-swing {
+  0%,
+  100% {
+    transform: rotate(-38deg);
+  }
+  45% {
+    transform: rotate(18deg);
+  }
+  55% {
+    transform: rotate(18deg);
+  }
+}
+
+@keyframes door-rattle {
+  0%,
+  40%,
+  100% {
+    transform: rotate(9deg);
+  }
+  50% {
+    transform: rotate(10.5deg);
+  }
+  60% {
+    transform: rotate(8.4deg);
+  }
+}
+
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes needle-seek {
+  0%,
+  100% {
+    transform: rotate(-22deg);
+  }
+  30% {
+    transform: rotate(14deg);
+  }
+  55% {
+    transform: rotate(-6deg);
+  }
+  80% {
+    transform: rotate(9deg);
+  }
+}
+
+@keyframes dash-march {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+
+.animate-bob {
+  animation: bob 3.4s ease-in-out infinite;
+}
+
+.animate-spin-slow {
+  animation: spin-slow 9s linear infinite;
+}
+
+.animate-needle {
+  animation: needle-seek 5s ease-in-out infinite;
+  transform-origin: 50% 50%;
+}
+
+.animate-drift {
+  animation: drift-left var(--drift, 60s) linear infinite;
+}
+
+.route-march {
+  animation: dash-march 1.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
