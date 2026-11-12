@@ -353,6 +353,12 @@ body {
   cursor: pointer;
 }
 
+/* A name in the layer above the islands: taps go through it to whatever lies beneath. */
+.isle.isle-tag {
+  pointer-events: none;
+  cursor: auto;
+}
+
 .isle.is-dimmed {
   opacity: 0.22;
 }
