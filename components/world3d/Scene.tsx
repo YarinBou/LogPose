@@ -403,6 +403,11 @@ function Course({ progressRef }: { progressRef: RefObject<number> }) {
   return (
     <group>
       <Line points={VOYAGE.points} color="#f6dc8b" lineWidth={1.4} dashed dashSize={0.07} gapSize={0.06} transparent opacity={0.55} />
+      {/* As on the 2D chart: Luffy's Summit War detour in pink, the uncharted last leg faint. */}
+      {VOYAGE.detours.map((points, i) => (
+        <Line key={i} points={points} color="#f29ad0" lineWidth={1.8} dashed dashSize={0.07} gapSize={0.06} transparent opacity={0.85} />
+      ))}
+      <Line points={VOYAGE.toLaughTale} color="#f6dc8b" lineWidth={1.2} dashed dashSize={0.03} gapSize={0.08} transparent opacity={0.45} />
       <Line points={wake} color="#ecc14f" lineWidth={3.2} />
     </group>
   );
