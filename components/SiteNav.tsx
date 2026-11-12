@@ -10,8 +10,8 @@ import { cn } from "@/lib/utils";
 const LINKS = [
   { href: "/#timeline", label: "Timeline", short: "Timeline" },
   { href: "/#crew", label: "Crew", short: "Crew" },
-  { href: "/#map", label: "World Map", short: "Map" },
-  { href: "/3d-world-map", label: "3D World Map", short: "3D" },
+  { href: "/#map", label: "2D World Map", short: "2D Map" },
+  { href: "/3d-world-map", label: "3D World Map", short: "3D Map" },
 ];
 
 interface SiteNavProps {
@@ -63,8 +63,8 @@ export function SiteNav({ solid = false }: SiteNavProps) {
                     current ? "bg-black/30 text-gold-300" : "text-parchment-100",
                   )}
                 >
-                  <span className="sm:hidden">{link.short}</span>
-                  <span className="hidden sm:inline">{link.label}</span>
+                  <span className="lg:hidden">{link.short}</span>
+                  <span className="hidden lg:inline">{link.label}</span>
                 </Link>
               </li>
             );

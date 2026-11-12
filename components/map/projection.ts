@@ -23,10 +23,10 @@ export const EDGE = 34;
 /** Half-width of the central Red Line. */
 export const RED_HALF = 17;
 
-const NORTH_TOP = 34;
+export const NORTH_TOP = 34;
 export const BAND_TOP = 330;
 export const BAND_BOTTOM = 570;
-const SOUTH_BOTTOM = MAP_HEIGHT - 34;
+export const SOUTH_BOTTOM = MAP_HEIGHT - 34;
 
 function lerp(from: number, to: number, t: number): number {
   return from + (to - from) * t;
