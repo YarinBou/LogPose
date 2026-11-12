@@ -103,10 +103,11 @@ export function bountyHistory(id: CrewId): BountyStep[] {
 
 /**
  * Places that get a page of their own: story landmarks, anywhere the timeline visits,
- * and anywhere the Ohara map details with points of interest.
+ * anywhere the Ohara map details with points of interest, and anywhere with a written description.
  */
 export const LANDMARKS: MapLocation[] = LOCATIONS.filter(
-  (location) => !location.faction && (location.tier === 1 || location.pois.length > 0 || arcsAtLocation(location.id).length > 0),
+  (location) =>
+    !location.faction && (location.tier === 1 || location.pois.length > 0 || Boolean(location.description) || arcsAtLocation(location.id).length > 0),
 );
 
 const LANDMARK_IDS = new Set(LANDMARKS.map((location) => location.id));

@@ -9,6 +9,8 @@
  *
  * Spellings follow the Ohara map ("Whisky Peak", "Dress Rosa", "Elbaph", "Kaidou").
  */
+import { LOCATION_INFO } from "@/data/map-details";
+import { SAGAS } from "@/data/timeline";
 import { slugify } from "@/lib/utils";
 
 export type RegionId =
@@ -33,7 +35,73 @@ export interface Region {
 /** 1 = story landmark (always labelled), 2 = notable, 3 = minor. */
 export type Tier = 1 | 2 | 3;
 
-export interface MapLocation {
+/** Someone who has been to a place, or is tied to it. */
+export interface Visitor {
+  name: string;
+  kind: "crew" | "character" | "organisation";
+  /** How they are connected, when they did not simply visit in the main story. */
+  note?: "mentioned" | "flashback" | "anime-only";
+}
+
+export type LocationStatus = "active" | "destroyed" | "occupied" | "unknown";
+
+/** What the land looks like. Chooses the island's colours and drawing on the map. */
+export type Terrain =
+  | "temperate"
+  | "tropical"
+  | "jungle"
+  | "desert"
+  | "snow"
+  | "rock"
+  | "urban"
+  | "city"
+  | "fortress"
+  | "walled"
+  | "haunted"
+  | "mangrove"
+  | "tree"
+  | "candy"
+  | "tech"
+  | "elephant"
+  | "fire-ice"
+  | "sky"
+  | "bubble"
+  | "redline";
+
+/**
+ * Extended information about a place. Every field is optional: an entry carries only what
+ * is known with confidence. Written in data/map-details.ts.
+ */
+export interface LocationInfo {
+  /** Saga in which the place first matters, such as "Alabasta Saga". */
+  saga?: string;
+  /** Arc in which the place first matters. */
+  arc?: string;
+  /** Anime episode in which the place first appears. */
+  firstAnimeEpisode?: number;
+  /** Manga chapter in which the place first appears. */
+  firstMangaChapter?: number;
+  /** Two to four sentences: what the place is and why it matters. */
+  description?: string;
+  /** Short bullets of what happened there, in order. */
+  keyEvents?: string[];
+  visitedBy?: Visitor[];
+  ruler?: string;
+  affiliation?: string;
+  population?: string;
+  climate?: string;
+  /** Notable features, separated by semicolons. */
+  features?: string;
+  status?: LocationStatus;
+  terrain?: Terrain;
+  /**
+   * The latest manga chapter a reader needs to have reached for this entry to be safe.
+   * The spoiler guard hides entries beyond the reader's chosen point.
+   */
+  spoilerLevel?: number;
+}
+
+export interface MapLocation extends LocationInfo {
   id: string;
   name: string;
   x: number;
@@ -540,14 +608,30 @@ const POIS: Record<string, string[]> = {
   ],
 };
 
+/** Saga and arc for places the voyage visits, read from the timeline so they are stated once. */
+const TIMELINE_PLACE = new Map<string, { saga: string; arc: string }>();
+for (const saga of SAGAS) {
+  for (const arc of saga.arcs) {
+    for (const id of arc.locationIds) {
+      if (!TIMELINE_PLACE.has(id)) TIMELINE_PLACE.set(id, { saga: saga.name, arc: arc.name });
+    }
+  }
+}
+
 function build([name, x, y, note, flags = ""]: Raw): MapLocation {
   const id = slugify(name);
+  const info = LOCATION_INFO[id] ?? {};
+  const destroyed = flags.includes("X") || info.status === "destroyed";
   const tier: Tier = flags.includes("1") ? 1 : flags.includes("2") ? 2 : 3;
   let region = regionFromCoordinates(x, y);
   if (flags.includes("R")) region = "red-line";
   if (flags.includes("C")) region = "calm-belt";
   if (flags.includes("K")) region = "sky";
   return {
+    ...info,
+    saga: info.saga ?? TIMELINE_PLACE.get(id)?.saga,
+    arc: info.arc ?? TIMELINE_PLACE.get(id)?.arc,
+    status: info.status ?? (destroyed ? "destroyed" : undefined),
     id,
     name,
     x,
@@ -557,12 +641,24 @@ function build([name, x, y, note, flags = ""]: Raw): MapLocation {
     note,
     faction: flags.includes("F"),
     unplaced: flags.includes("U"),
-    destroyed: flags.includes("X"),
+    destroyed,
     pois: POIS[id] ?? [],
   };
 }
 
 export const LOCATIONS: MapLocation[] = RAW.map(build);
+
+// A typo in a details key would silently drop that entry, so fail loudly instead.
+{
+  const known = new Set(LOCATIONS.map((location) => location.id));
+  const orphans = Object.keys(LOCATION_INFO).filter((id) => !known.has(id));
+  if (orphans.length > 0) {
+    throw new Error(`data/map-details.ts has entries for unknown locations: ${orphans.join(", ")}`);
+  }
+}
+
+/** Number of places that carry a written description. */
+export const DESCRIBED_COUNT = LOCATIONS.filter((location) => location.description).length;
 
 const LOCATION_INDEX = new Map(LOCATIONS.map((l) => [l.id, l]));
 

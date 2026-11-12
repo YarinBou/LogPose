@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { motion, useMotionTemplate, useScroll, useSpring, useTransform } from "framer-motion";
+import { motion, useInView, useMotionTemplate, useMotionValueEvent, useScroll, useSpring, useTransform } from "framer-motion";
 import { ThousandSunnySprite } from "@/components/art/Sprites";
 
 /** Vertical distance covered by one swing of the course, in pixels. */
@@ -52,7 +52,19 @@ export function SunnyTracker({ trackRef }: SunnyTrackerProps) {
   }, []);
 
   const { scrollYProgress } = useScroll({ target: trackRef, offset: ["start center", "end center"] });
-  const progress = useSpring(scrollYProgress, { stiffness: 80, damping: 22, restDelta: 0.0005 });
+  // The ship eases toward the scroll position on a spring. But only while the timeline is
+  // on screen: off screen the spring would keep redrawing a path thousands of pixels long
+  // for seconds after every scroll, so there the ship is simply put where it belongs.
+  const onScreen = useInView(trackRef);
+  const progress = useSpring(0, { stiffness: 80, damping: 22, restDelta: 0.0005 });
+  useMotionValueEvent(scrollYProgress, "change", (value) => {
+    if (onScreen) progress.set(value);
+    else progress.jump(value);
+  });
+  // A page can open already scrolled, with no scroll event to say where.
+  useEffect(() => {
+    progress.jump(scrollYProgress.get());
+  }, [progress, scrollYProgress]);
   const percent = useTransform(progress, (value) => value * 100);
   const offsetDistance = useMotionTemplate`${percent}%`;
 

@@ -11,6 +11,16 @@ An interactive, Next.js-powered chronicle of the One Piece timeline, lore, and g
 - **The 3D World Map** (`/3d-world-map`): the same world as a three.js globe. The Red Line rings the poles, the Grand Line is the equator, story landmarks are Blender-built islands, and the Thousand Sunny sails the course arc by arc.
 - **Easter eggs**: three hidden Pandamen, the Alabasta "X" cursor, Usopp's Lies Tracker, "Waraibanashi" at Laugh Tale, a dachshund in a straw hat, Doskoi Panda and Criminal brand marks, and Minatomo on the 404 page.
 
+## The 2D map in more detail
+
+- Every place is drawn as a small island: a silhouette generated from its id (so it never changes), coloured by terrain, with hand-drawn details on the landmarks. See `components/map/islands.tsx`.
+- Picking an island travels to it and opens its log: a popover beside the island on wide screens, a bottom sheet on phones. `data/map-details.ts` holds the descriptions, key events, visitors and first appearances.
+- `/?place=<id>` opens the map on a place, for example `/?place=water-seven`, and the address follows the selection.
+- A spoiler guard in the panel hides entries that need a later chapter than the reader has reached.
+- The chart is a stack of separate elements moved with one CSS transform, not a single SVG, so panning, zooming and the idle animation are done by the GPU without redrawing. The reasoning is written up at the top of `components/map/WorldMap.tsx`.
+
+Screenshots of the island panel at phone and desktop sizes are in `docs/screenshots/island-upgrade/`.
+
 ## Reference pages and SEO
 
 Besides the interactive pages, every arc, saga, crew member and landmark has its own static page, generated from the same data:

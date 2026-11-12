@@ -10,9 +10,20 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import Link from "next/link";
-import { Globe, Maximize, Search, X, ZoomIn, ZoomOut } from "lucide-react";
+import { AnimatePresence, useReducedMotion } from "framer-motion";
+import { Globe, Maximize, Search, ZoomIn, ZoomOut } from "lucide-react";
 import { DoskoiPandaMark } from "@/components/art/Sprites";
-import { LocationDetails, PoneglyphDetails } from "@/components/map/LocationDetails";
+import {
+  hasFoam,
+  ISLAND_VIEWBOX,
+  IslandDefs,
+  IslandFoam,
+  IslandLand,
+  islandLook,
+  VisitedPennant,
+  type IslandLook,
+} from "@/components/map/islands";
+import { LocationPopover, LocationSheet, subjectKey, type PanelSubject } from "@/components/map/LocationPanel";
 import { MapBase } from "@/components/map/MapBase";
 import {
   LAUGH_TALE_POINT,
@@ -31,16 +42,40 @@ import {
   REGIONS,
   type MapLocation,
   type RegionId,
+  type Tier,
 } from "@/data/map";
+import { arcsAtLocation } from "@/data/timeline";
 import { FOCUS_LOCATION_EVENT, type FocusLocationDetail } from "@/lib/events";
+import { useMediaQuery } from "@/lib/hooks";
 import { PLACE_COUNT } from "@/lib/site";
-import { cn } from "@/lib/utils";
+import { cn, seededUnit } from "@/lib/utils";
+
+/*
+ * How the chart is put together, and why.
+ *
+ * The chart is not one big SVG. It is a stack of separate elements inside one wrapper:
+ *
+ *   wrapper (HTML, 1400 x 900, moved and scaled with a CSS transform)
+ *     the base chart      one <svg>, drawn once
+ *     the course          one <svg>
+ *     every island        its own small element, each with its own little <svg>
+ *     Poneglyphs, the selection ring, the hover name
+ *
+ * Panning and zooming change only the wrapper's transform, which the browser applies to an
+ * already-drawn picture on the GPU: nothing is redrawn while the map moves. Each island
+ * being an element of its own means its idle bob, its foam, its hover and its selection
+ * are transforms and opacity on that element alone, which the GPU also handles without
+ * redrawing. With everything in one SVG, every one of those frames redrew the whole chart.
+ *
+ * Islands are positioned in chart units and then scaled back down by the inverse of the
+ * zoom (--u), so inside an island everything is in plain screen pixels.
+ */
 
 /* ------------------------------------------------------------------ */
 /* View maths                                                           */
 /* ------------------------------------------------------------------ */
 
-/** Centre of the viewport in drawing units, and zoom relative to "whole map fits". */
+/** Centre of the viewport in chart units, and zoom relative to "whole map fits". */
 interface View {
   cx: number;
   cy: number;
@@ -52,14 +87,14 @@ interface Size {
   height: number;
 }
 
-/** Most pixels one drawing unit may cover: enough to pull Totto Land's 34 islands apart. */
+/** Most pixels one chart unit may cover: enough to pull Totto Land's 34 islands apart. */
 const MAX_SCALE = 13;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** Pixels per drawing unit when the whole map just fits the frame. */
+/** Pixels per chart unit when the whole map just fits the frame. */
 function fitScale(size: Size): number {
   return Math.min(size.width / MAP_WIDTH, size.height / MAP_HEIGHT);
 }
@@ -90,28 +125,52 @@ function clampView(view: View, size: Size): View {
 interface Placed extends MapLocation {
   px: number;
   py: number;
+  /** Outline, colours and drawing for this island, worked out once. */
+  look: IslandLook;
+  /** The crew calls here on the timeline. */
+  visited: boolean;
+  /** Where in the idle cycle this island starts, 0..1. Fixed per island. */
+  phase: number;
 }
 
 const PLACED: Placed[] = LOCATIONS.map((location) => ({
   ...location,
   px: mapX(location.x),
   py: mapY(location.y),
+  look: islandLook(location),
+  visited: arcsAtLocation(location.id).length > 0,
+  phase: Number(seededUnit(location.id, 31).toFixed(3)),
 }));
 
 const PLACED_BY_ID = new Map(PLACED.map((location) => [location.id, location]));
 
 const PLACED_PONEGLYPHS = PONEGLYPHS.map((stone) => ({ ...stone, px: mapX(stone.x), py: mapY(stone.y) }));
 
-const LABEL_PX: Record<1 | 2 | 3, number> = { 1: 12.5, 2: 11, 3: 10 };
-const DOT_PX: Record<1 | 2 | 3, number> = { 1: 4.6, 2: 3.3, 3: 2.5 };
+/** Island radius on screen, in pixels, with the whole world in view. Mirrored in globals.css. */
+const ISLE_PX: Record<Tier, number> = { 1: 10, 2: 6.6, 3: 4 };
+/** Name size per tier, in pixels. Mirrored in globals.css. */
+const LABEL_PX: Record<Tier, number> = { 1: 15.5, 2: 13, 3: 11.5 };
+
+/**
+ * Islands grow as the chart is zoomed in, but more slowly than the chart itself: they are
+ * symbols, not land to scale, so a close view shows bigger drawings with more sea between.
+ */
+function zoomBoost(scale: number): number {
+  return clamp(Math.sqrt(scale), 1, 2.6);
+}
+
+function isleRadius(tier: Tier, scale: number): number {
+  return ISLE_PX[tier] * zoomBoost(scale);
+}
 
 type LabelSide = "right" | "left";
 
 /**
- * Decide which names fit. Landmarks go first, then notable places, then minor ones as the
- * zoom allows. A name is placed to the right of its dot, or to the left if that is taken,
- * and dropped if both spots collide with a name already placed. Positions are worked out in
- * screen pixels, which depend on the scale but not on where the map is panned.
+ * Decide which names fit. Landmarks go first and are always tried; notable places join as
+ * the chart is zoomed in, and minor ones only close up. A name is placed to the right of
+ * its island, or to the left if that is taken, and dropped if both spots collide with a
+ * name already placed. Positions are worked out in screen pixels, which depend on the
+ * scale but not on where the map is panned.
  */
 function chooseLabels(scale: number, visible: Placed[]): Map<string, LabelSide> {
   const chosen = new Map<string, LabelSide>();
@@ -123,11 +182,12 @@ function chooseLabels(scale: number, visible: Placed[]): Map<string, LabelSide> 
 
   for (const location of candidates) {
     const font = LABEL_PX[location.tier];
-    const width = location.name.length * font * 0.56 + 6;
-    const height = font + 3;
+    // The display face is narrow: about 0.47 of its size per character.
+    const width = location.name.length * font * 0.47 + 8;
+    const height = font + 2;
     const sx = location.px * scale;
     const top = location.py * scale - height / 2;
-    const gap = DOT_PX[location.tier] + 4;
+    const gap = isleRadius(location.tier, scale) + 5;
 
     for (const side of ["right", "left"] as const) {
       const left = side === "right" ? sx + gap : sx - gap - width;
@@ -150,9 +210,68 @@ interface HoverInfo {
   name: string;
   px: number;
   py: number;
+  /** Tier of the island under the pointer, or undefined for a Poneglyph. */
+  tier?: Tier;
 }
 
 type Selection = { kind: "location"; id: string } | { kind: "poneglyph"; id: string } | null;
+
+interface IslandProps {
+  site: Placed;
+  /** Which side the name goes on, or undefined when there is no room for it. */
+  side: LabelSide | undefined;
+  dimmed: boolean;
+  selected: boolean;
+  onHover: (info: HoverInfo | null) => void;
+  onSelect: (selection: Selection) => void;
+}
+
+/**
+ * One island on the chart: a hit area, the drawing, and its name.
+ *
+ * It takes no zoom: its size comes from CSS variables on the chart wrapper, so zooming
+ * re-renders an island only if its name appears or disappears. And it is memoised, so
+ * selecting an island re-renders that island and the one let go, not the other 277.
+ */
+const Island = memo(function Island({ site, side, dimmed, selected, onHover, onSelect }: IslandProps) {
+  return (
+    <div
+      data-marker=""
+      data-tier={site.tier}
+      className={cn("isle", site.tier === 1 && "isle-landmark", selected && "is-selected", dimmed && "is-dimmed")}
+      // Each island idles at its own point in the cycle, so no two move in step.
+      style={{ left: site.px, top: site.py, ["--phase" as string]: site.phase }}
+      onPointerEnter={() => onHover({ name: site.name, px: site.px, py: site.py, tier: site.tier })}
+      onPointerLeave={() => onHover(null)}
+      onClick={() => onSelect({ kind: "location", id: site.id })}
+    >
+      {/* generous hit area: never smaller than a fingertip-sized target */}
+      <span className="isle-hit" />
+
+      {site.faction ? (
+        <span className="isle-faction" />
+      ) : (
+        // One wrapper carries the idle bob and another the hover and selection movement,
+        // so the two never fight over `transform`.
+        <span className="isle-bob">
+          <span className="isle-body">
+            {hasFoam(site.look, site.unplaced) ? (
+              <svg className="isle-art isle-foam" viewBox={ISLAND_VIEWBOX} aria-hidden="true">
+                <IslandFoam look={site.look} />
+              </svg>
+            ) : null}
+            <svg className="isle-art" viewBox={ISLAND_VIEWBOX} aria-hidden="true">
+              <IslandLand look={site.look} tier={site.tier} destroyed={site.destroyed} unplaced={site.unplaced} />
+              {site.visited ? <VisitedPennant /> : null}
+            </svg>
+          </span>
+        </span>
+      )}
+
+      {side ? <span className={cn("isle-label", side === "left" && "isle-label-left", site.destroyed && "is-ruin")}>{site.name}</span> : null}
+    </div>
+  );
+});
 
 interface MapLayersProps {
   scale: number;
@@ -160,14 +279,16 @@ interface MapLayersProps {
   showRoute: boolean;
   showPoneglyphs: boolean;
   showFactions: boolean;
+  /** Id of the selected location, if a location is selected. */
+  selectedId: string | null;
   onHover: (info: HoverInfo | null) => void;
   onSelect: (selection: Selection) => void;
 }
 
 /**
- * Routes, markers and names. Everything is sized in screen pixels divided by the scale, so
- * dots and text stay the same size on screen while the chart underneath grows. Memoised:
- * panning only moves the parent group and never re-renders this layer.
+ * The course, the islands and the Poneglyphs. Memoised: panning changes none of its props,
+ * so it is not re-rendered while the map is dragged. Zooming re-renders it to decide
+ * which names fit, but the islands inside are memoised in turn.
  */
 const MapLayers = memo(function MapLayers({
   scale,
@@ -175,123 +296,72 @@ const MapLayers = memo(function MapLayers({
   showRoute,
   showPoneglyphs,
   showFactions,
+  selectedId,
   onHover,
   onSelect,
 }: MapLayersProps) {
-  const visible = useMemo(() => PLACED.filter((l) => showFactions || !l.faction), [showFactions]);
+  // Small islands come first in the document, so landmarks and their names sit on top.
+  const visible = useMemo(
+    () => PLACED.filter((l) => showFactions || !l.faction).sort((a, b) => b.tier - a.tier),
+    [showFactions],
+  );
   const labelPool = useMemo(
     () => (region === "all" ? visible : visible.filter((l) => l.region === region)),
     [visible, region],
   );
   const labels = useMemo(() => chooseLabels(scale, labelPool), [scale, labelPool]);
-  const u = 1 / scale;
 
   return (
-    <g>
+    <>
       {showRoute ? (
-        <g fill="none" strokeLinecap="round" strokeLinejoin="round">
-          <path d={ROUTES.summitWar} stroke="#f29ad0" strokeWidth={1.4} strokeDasharray="2 5" vectorEffect="non-scaling-stroke" opacity={0.85} />
-          <path d={ROUTES.toLaughTale} stroke="#f6dc8b" strokeWidth={1.4} strokeDasharray="1 7" vectorEffect="non-scaling-stroke" opacity={0.7} />
-          {[ROUTES.paradise, ROUTES.newWorld].map((d) => (
-            <g key={d}>
-              <path d={d} stroke="rgba(3,21,35,0.7)" strokeWidth={4.5} vectorEffect="non-scaling-stroke" />
-              <path d={d} stroke="#ecc14f" strokeWidth={2} strokeDasharray="8 6" vectorEffect="non-scaling-stroke" className="route-march" />
+        <>
+          <svg className="map-layer" width={MAP_WIDTH} height={MAP_HEIGHT} viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`} aria-hidden="true">
+            <g fill="none" strokeLinecap="round" strokeLinejoin="round">
+              <path d={ROUTES.summitWar} className="route-detour" stroke="#f29ad0" opacity={0.85} />
+              <path d={ROUTES.toLaughTale} className="route-uncharted" stroke="#f6dc8b" opacity={0.7} />
+              {[ROUTES.paradise, ROUTES.newWorld].map((d) => (
+                <g key={d}>
+                  <path d={d} className="route-shadow" stroke="rgba(3,21,35,0.7)" />
+                  <path d={d} className="route-line" stroke="#ecc14f" />
+                </g>
+              ))}
             </g>
-          ))}
-          <g transform={`translate(${LAUGH_TALE_POINT[0]} ${LAUGH_TALE_POINT[1]})`}>
-            <circle r={8 * u} fill="rgba(3,21,35,0.75)" stroke="#f6dc8b" strokeWidth={1.2 * u} strokeDasharray={`${2 * u} ${2 * u}`} />
-            <text textAnchor="middle" y={4 * u} fontSize={11 * u} fontFamily="var(--font-display)" fill="#f6dc8b">
-              ?
-            </text>
-          </g>
-        </g>
+          </svg>
+          <div className="map-pin" style={{ left: LAUGH_TALE_POINT[0], top: LAUGH_TALE_POINT[1] }} aria-hidden="true">
+            <span className="map-unknown">?</span>
+          </div>
+        </>
       ) : null}
+
+      {visible.map((site) => (
+        <Island
+          key={site.id}
+          site={site}
+          side={labels.get(site.id)}
+          dimmed={region !== "all" && site.region !== region}
+          selected={site.id === selectedId}
+          onHover={onHover}
+          onSelect={onSelect}
+        />
+      ))}
 
       {showPoneglyphs
         ? PLACED_PONEGLYPHS.map((stone) => (
-            <g
+            <div
               key={stone.id}
-              transform={`translate(${stone.px} ${stone.py})`}
               data-marker=""
-              className="cursor-pointer"
+              className="map-pin cursor-pointer"
+              style={{ left: stone.px, top: stone.py }}
               onPointerEnter={() => onHover({ name: stone.name, px: stone.px, py: stone.py })}
               onPointerLeave={() => onHover(null)}
               onClick={() => onSelect({ kind: "poneglyph", id: stone.id })}
             >
-              <rect x={-8 * u} y={-8 * u} width={16 * u} height={16 * u} fill="transparent" />
-              <rect
-                x={-3.6 * u}
-                y={-3.6 * u}
-                width={7.2 * u}
-                height={7.2 * u}
-                fill={stone.road ? "#cf4034" : "#3f4a5c"}
-                stroke="#fbf4e1"
-                strokeWidth={0.9 * u}
-              />
-            </g>
+              <span className="map-stone-hit" />
+              <span className={cn("map-stone", stone.road && "is-road")} />
+            </div>
           ))
         : null}
-
-      {visible.map((location) => {
-        const dimmed = region !== "all" && location.region !== region;
-        const r = DOT_PX[location.tier] * u;
-        const side = labels.get(location.id);
-        const font = LABEL_PX[location.tier] * u;
-        const fill = location.tier === 1 ? "#ecc14f" : location.tier === 2 ? "#fbf4e1" : "#a9dcea";
-
-        return (
-          <g
-            key={location.id}
-            transform={`translate(${location.px} ${location.py})`}
-            data-marker=""
-            opacity={dimmed ? 0.2 : 1}
-            className="cursor-pointer"
-            onPointerEnter={() => onHover({ name: location.name, px: location.px, py: location.py })}
-            onPointerLeave={() => onHover(null)}
-            onClick={() => onSelect({ kind: "location", id: location.id })}
-          >
-            <circle r={9 * u} fill="transparent" />
-            {location.faction ? (
-              <rect x={-r} y={-r} width={r * 2} height={r * 2} transform="rotate(45)" fill="#cf4034" stroke="#fbf4e1" strokeWidth={0.8 * u} />
-            ) : (
-              <circle
-                r={r}
-                fill={location.unplaced ? "rgba(3,21,35,0.55)" : fill}
-                stroke={location.unplaced ? fill : "#031523"}
-                strokeWidth={(location.unplaced ? 1.1 : 0.9) * u}
-                strokeDasharray={location.unplaced ? `${1.6 * u} ${1.2 * u}` : undefined}
-              />
-            )}
-            {location.destroyed ? (
-              <path
-                d={`M${-r * 1.5} ${-r * 1.5}L${r * 1.5} ${r * 1.5}M${r * 1.5} ${-r * 1.5}L${-r * 1.5} ${r * 1.5}`}
-                stroke="#cf4034"
-                strokeWidth={1.3 * u}
-                strokeLinecap="round"
-              />
-            ) : null}
-            {side ? (
-              <text
-                x={(side === "right" ? 1 : -1) * (DOT_PX[location.tier] + 4) * u}
-                y={font * 0.34}
-                textAnchor={side === "right" ? "start" : "end"}
-                fontSize={font}
-                fontFamily="var(--font-sans)"
-                fontWeight={location.tier === 1 ? 700 : 500}
-                fill={location.tier === 1 ? "#fbeab0" : "#f4e6c3"}
-                stroke="#031523"
-                strokeWidth={3 * u}
-                strokeLinejoin="round"
-                paintOrder="stroke"
-                className="pointer-events-none select-none"
-              >
-                {location.name}
-              </text>
-            ) : null}
-          </g>
-        );
-      })}
-    </g>
+    </>
   );
 });
 
@@ -314,13 +384,35 @@ const REGION_CHIPS: (RegionId | "all")[] = [
 
 const INITIAL_VIEW: View = { cx: MAP_WIDTH / 2, cy: MAP_HEIGHT / 2, zoom: 1 };
 
+/** How the map moves when it is sent somewhere (as opposed to dragged): 600ms, ease-in-out. */
+const GLIDE_MS = 600;
+const GLIDE = `transform ${GLIDE_MS}ms cubic-bezier(0.65, 0, 0.35, 1)`;
+
+/**
+ * Where in the frame a selected island should come to rest, as fractions of its width and
+ * height. On a wide screen the popover opens to the island's right, so the island sits
+ * left of centre. On a phone the sheet covers the lower part of the screen, so it sits high.
+ */
+const REST_DESKTOP = { x: 0.3, y: 0.5 };
+const REST_MOBILE = { x: 0.5, y: 0.27 };
+
+/** Smallest scale (pixels per chart unit) to bring the map to when an island is picked. */
+const PICK_SCALE = 2.4;
+
 export function WorldMap() {
   const frameRef = useRef<HTMLDivElement>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
+  const isDesktopRef = useRef(isDesktop);
+  isDesktopRef.current = isDesktop;
+  const [inView, setInView] = useState(true);
+  const [pageVisible, setPageVisible] = useState(true);
+  const reduceMotion = useReducedMotion() ?? false;
 
   const [size, setSize] = useState<Size>({ width: 0, height: 0 });
   const [view, setView] = useState<View>(INITIAL_VIEW);
   const [gliding, setGliding] = useState(true);
+  const [dragging, setDragging] = useState(false);
   const [region, setRegion] = useState<RegionId | "all">("all");
   const [selection, setSelection] = useState<Selection>(null);
   const [hover, setHover] = useState<HoverInfo | null>(null);
@@ -338,6 +430,16 @@ export function WorldMap() {
   const drag = useRef<{ x: number; y: number; view: View; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
   const initialised = useRef(false);
+  /** True while a requested glide is under way: see "settled scale" below. */
+  const settleLater = useRef(false);
+
+  // Idle motion runs only while someone can see it.
+  useEffect(() => {
+    const onVisibility = () => setPageVisible(document.visibilityState === "visible");
+    onVisibility();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
 
   /* -- measure the frame; open on a view that fills it -- */
   useEffect(() => {
@@ -346,6 +448,7 @@ export function WorldMap() {
     const measure = () => {
       const next = { width: frame.clientWidth, height: frame.clientHeight };
       if (next.width === 0 || next.height === 0) return;
+      settleLater.current = false;
       setSize(next);
       setView((current) => {
         if (!initialised.current) {
@@ -361,16 +464,64 @@ export function WorldMap() {
     return () => observer.disconnect();
   }, []);
 
+  /* -- the phone sheet, and the idle motion, step aside while the map is scrolled away -- */
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const observer = new IntersectionObserver(([entry]) => setInView(entry.isIntersecting), { threshold: 0.1 });
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, []);
+
   const ready = size.width > 0;
   const fit = ready ? fitScale(size) : 1;
   const scale = fit * view.zoom;
   const translateX = size.width / 2 - view.cx * scale;
   const translateY = size.height / 2 - view.cy * scale;
 
+  /*
+   * The settled scale: the zoom the islands and their names are currently laid out for.
+   *
+   * Resizing every island and re-deciding which names fit is the one expensive thing the
+   * chart does. If it ran when a glide started, the glide would open with a stall. So a
+   * glide runs first, entirely on the GPU, with the islands simply growing or shrinking
+   * along with the chart; they are laid out for the new zoom once it has arrived. Direct
+   * manipulation (wheel, pinch) has no glide to protect and settles at once.
+   */
+  const [settledScale, setSettledScale] = useState(1);
+  useEffect(() => {
+    if (!settleLater.current || reduceMotion) {
+      settleLater.current = false;
+      setSettledScale(scale);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      settleLater.current = false;
+      setSettledScale(scale);
+    }, GLIDE_MS + 30);
+    return () => window.clearTimeout(timer);
+  }, [scale, reduceMotion]);
+
+  /*
+   * While a glide is under way the chart is marked as travelling, which tells the browser
+   * to keep moving the picture it already has rather than redraw it sharper at each new
+   * zoom along the way. The redraw happens once, when the mark comes off at the end.
+   */
+  const [travelling, setTravelling] = useState(false);
+  useEffect(() => {
+    if (!travelling) return;
+    const timer = window.setTimeout(() => setTravelling(false), GLIDE_MS + 30);
+    return () => window.clearTimeout(timer);
+  }, [travelling, view]);
+
   /* -- moving the view -- */
   const glideTo = useCallback((next: View) => {
+    const clamped = clampView(next, sizeRef.current);
+    // Only a glide that changes the zoom has anything to settle afterwards.
+    settleLater.current = Math.abs(clamped.zoom - viewRef.current.zoom) > 1e-6;
     setGliding(true);
-    setView(clampView(next, sizeRef.current));
+    setTravelling(true);
+    setView(clamped);
   }, []);
 
   const zoomBy = useCallback(
@@ -402,19 +553,68 @@ export function WorldMap() {
     [glideTo],
   );
 
+  /**
+   * Bring a chart point to its resting place in the frame (see REST_DESKTOP / REST_MOBILE),
+   * at no less than `minScale` pixels per chart unit. Never zooms out.
+   */
+  const bringIntoView = useCallback(
+    (px: number, py: number, minScale: number) => {
+      const current = sizeRef.current;
+      const base = fitScale(current);
+      const zoom = clamp(Math.max(viewRef.current.zoom, minScale / base), 1, MAX_SCALE / base);
+      const scaleAfter = base * zoom;
+      const rest = isDesktopRef.current ? REST_DESKTOP : REST_MOBILE;
+      glideTo({
+        cx: px - ((rest.x - 0.5) * current.width) / scaleAfter,
+        cy: py - ((rest.y - 0.5) * current.height) / scaleAfter,
+        zoom,
+      });
+      // On a phone the sheet covers the lower screen, so the map itself has to be on screen first.
+      if (!isDesktopRef.current) {
+        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        frameRef.current?.scrollIntoView({ behavior: reduce ? "instant" : "smooth", block: "start" });
+      }
+    },
+    [glideTo],
+  );
+
+  /** Select a place and travel to it. Used by search, the list, timeline cards and links. */
   const focusLocation = useCallback(
     (id: string) => {
       const location = PLACED_BY_ID.get(id);
       if (!location) return;
       setSelection({ kind: "location", id });
       setRegion("all");
-      const base = fitScale(sizeRef.current);
-      // Close enough to read the neighbours, and never zoom out from where the reader already is.
-      const zoom = Math.max(viewRef.current.zoom, (location.tier === 3 ? 6.5 : 4.2) / base);
-      glideTo({ cx: location.px, cy: location.py, zoom });
+      // Close enough to read the neighbours.
+      bringIntoView(location.px, location.py, location.tier === 3 ? 6.5 : 4.2);
     },
-    [glideTo],
+    [bringIntoView],
   );
+
+  const closePanel = useCallback(() => setSelection(null), []);
+
+  /* -- a link can open the map on a place: /?place=water-seven -- */
+  const openedFromLink = useRef(false);
+  useEffect(() => {
+    if (!ready || openedFromLink.current) return;
+    openedFromLink.current = true;
+    const place = new URLSearchParams(window.location.search).get("place");
+    if (!place || !PLACED_BY_ID.has(place)) return;
+    focusLocation(place);
+    // The reader arrived by link, so bring the map itself on screen (without animation:
+    // there is nothing on screen yet to travel from).
+    frameRef.current?.scrollIntoView({ behavior: "instant", block: isDesktopRef.current ? "center" : "start" });
+  }, [ready, focusLocation]);
+
+  // Keep the address in step with the selection, so the current island can be shared.
+  const selectedId = selection?.kind === "location" ? selection.id : null;
+  useEffect(() => {
+    if (!openedFromLink.current) return;
+    const url = new URL(window.location.href);
+    if (selectedId) url.searchParams.set("place", selectedId);
+    else url.searchParams.delete("place");
+    window.history.replaceState(window.history.state, "", url);
+  }, [selectedId]);
 
   /* -- timeline cards can ask for a location -- */
   useEffect(() => {
@@ -428,15 +628,15 @@ export function WorldMap() {
 
   /* -- Ctrl + wheel (and trackpad pinch) zooms about the pointer -- */
   useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
+    const surface = surfaceRef.current;
+    if (!surface) return;
     let settle = 0;
     const onWheel = (event: WheelEvent) => {
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
       const currentSize = sizeRef.current;
       const current = viewRef.current;
-      const box = svg.getBoundingClientRect();
+      const box = surface.getBoundingClientRect();
       const base = fitScale(currentSize);
       const oldScale = base * current.zoom;
       const zoom = clamp(current.zoom * Math.exp(-event.deltaY * 0.012), 1, MAX_SCALE / base);
@@ -446,25 +646,26 @@ export function WorldMap() {
       const offsetY = event.clientY - box.top - currentSize.height / 2;
       const cx = current.cx + offsetX / oldScale - offsetX / newScale;
       const cy = current.cy + offsetY / oldScale - offsetY / newScale;
+      settleLater.current = false;
       setGliding(false);
       setView(clampView({ cx, cy, zoom }, currentSize));
       window.clearTimeout(settle);
       settle = window.setTimeout(() => setGliding(true), 180);
     };
-    svg.addEventListener("wheel", onWheel, { passive: false });
+    surface.addEventListener("wheel", onWheel, { passive: false });
     return () => {
-      svg.removeEventListener("wheel", onWheel);
+      surface.removeEventListener("wheel", onWheel);
       window.clearTimeout(settle);
     };
   }, [ready]);
 
   /* -- drag to pan -- */
-  function handlePointerDown(event: ReactPointerEvent<SVGSVGElement>) {
+  function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
     drag.current = { x: event.clientX, y: event.clientY, view: viewRef.current, moved: false };
   }
 
-  function handlePointerMove(event: ReactPointerEvent<SVGSVGElement>) {
+  function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
     const start = drag.current;
     if (!start) return;
     const dx = event.clientX - start.x;
@@ -473,6 +674,8 @@ export function WorldMap() {
       if (Math.hypot(dx, dy) < 5) return;
       start.moved = true;
       setGliding(false);
+      setDragging(true);
+      setHover(null);
       event.currentTarget.setPointerCapture(event.pointerId);
     }
     const currentScale = fitScale(sizeRef.current) * start.view.zoom;
@@ -487,14 +690,26 @@ export function WorldMap() {
         suppressClick.current = false;
       }, 0);
       setGliding(true);
+      setDragging(false);
     }
     drag.current = null;
   }
 
-  const handleSelect = useCallback((next: Selection) => {
-    if (suppressClick.current) return;
-    setSelection(next);
-  }, []);
+  /** A marker was clicked or tapped: select it and travel to it. */
+  const handleSelect = useCallback(
+    (next: Selection) => {
+      if (suppressClick.current) return;
+      setSelection(next);
+      if (next?.kind === "location") {
+        const location = PLACED_BY_ID.get(next.id);
+        if (location) bringIntoView(location.px, location.py, PICK_SCALE);
+      } else if (next?.kind === "poneglyph") {
+        const stone = PLACED_PONEGLYPHS.find((entry) => entry.id === next.id);
+        if (stone) bringIntoView(stone.px, stone.py, PICK_SCALE);
+      }
+    },
+    [bringIntoView],
+  );
 
   const handleHover = useCallback((info: HoverInfo | null) => {
     if (drag.current?.moved) return;
@@ -505,6 +720,15 @@ export function WorldMap() {
   const selectedLocation = selection?.kind === "location" ? PLACED_BY_ID.get(selection.id) : undefined;
   const selectedStone = selection?.kind === "poneglyph" ? PLACED_PONEGLYPHS.find((s) => s.id === selection.id) : undefined;
   const selectedPoint = selectedLocation ?? selectedStone;
+  // With reduced motion the map jumps instead of gliding.
+  const glide = gliding && !reduceMotion ? GLIDE : "none";
+  /** Radius of the ring drawn round the selection, in pixels: just outside the island's foam. */
+  const selectedRadius = selectedLocation && !selectedLocation.faction ? isleRadius(selectedLocation.tier, settledScale) * 1.3 + 6 : 13;
+  const subject: PanelSubject | null = selectedLocation
+    ? { kind: "location", location: selectedLocation }
+    : selectedStone
+      ? { kind: "poneglyph", stone: selectedStone }
+      : null;
 
   const results = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -520,7 +744,6 @@ export function WorldMap() {
   }, [region]);
 
   const regionInfo = region === "all" ? undefined : REGIONS.find((r) => r.id === region);
-  const u = 1 / scale;
   const canPanVertically = ready && view.zoom > coverZoom(size) + 0.02;
 
   return (
@@ -580,7 +803,7 @@ export function WorldMap() {
                 className="w-full rounded-full border border-gold-600/60 bg-parchment-100 py-1.5 pl-9 pr-3 text-sm text-ink-900 placeholder:text-ink-300"
               />
               {results.length > 0 ? (
-                <ul className="parchment absolute inset-x-0 top-full z-30 mt-1.5 overflow-hidden rounded-md">
+                <ul className="parchment absolute inset-x-0 top-full z-40 mt-1.5 overflow-hidden rounded-md">
                   {results.map((result) => (
                     <li key={result.id}>
                       <button
@@ -605,17 +828,20 @@ export function WorldMap() {
             {/* chart */}
             <div
               ref={frameRef}
-              className="relative h-[58vh] max-h-[680px] min-h-[360px] overflow-hidden rounded-md bg-ocean-900 shadow-[inset_0_0_0_2px_rgba(0,0,0,0.5)]"
+              className="relative h-[58vh] max-h-[680px] min-h-[360px] scroll-mt-16 overflow-hidden rounded-md bg-ocean-900 shadow-[inset_0_0_0_2px_rgba(0,0,0,0.5)]"
             >
               {ready ? (
-                <svg
-                  ref={svgRef}
-                  width={size.width}
-                  height={size.height}
-                  viewBox={`0 0 ${size.width} ${size.height}`}
+                <div
+                  ref={surfaceRef}
                   role="img"
-                  aria-label="Abstract map of the One Piece world. Use the search box or the list of places to explore it without a pointer."
-                  className={cn("block select-none", drag.current?.moved ? "cursor-grabbing" : "cursor-grab")}
+                  aria-label="Chart of the One Piece world. Use the search box or the list of places to explore it without a pointer."
+                  className={cn(
+                    "map-surface absolute inset-0 select-none overflow-hidden",
+                    dragging ? "cursor-grabbing" : "cursor-grab",
+                    // The idle shimmer and bob are switched off, not just hidden, whenever the map
+                    // is scrolled away, the tab is in the background, or less motion is asked for.
+                    inView && pageVisible && !reduceMotion && "map-idle",
+                  )}
                   style={{ touchAction: canPanVertically ? "none" : "pan-y" }}
                   onPointerDown={handlePointerDown}
                   onPointerMove={handlePointerMove}
@@ -628,54 +854,57 @@ export function WorldMap() {
                     if (!(event.target as Element).closest("[data-marker]")) setSelection(null);
                   }}
                 >
-                  <g
+                  <div
+                    className={cn("map-world", travelling && !reduceMotion && "is-travelling")}
                     style={{
-                      transform: `translate(${translateX}px, ${translateY}px) scale(${scale})`,
-                      transformOrigin: "0 0",
-                      transition: gliding ? "transform 0.55s cubic-bezier(0.2, 0.8, 0.2, 1)" : "none",
+                      // translate3d gives the chart a layer of its own, so moving it is the GPU's job.
+                      transform: `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`,
+                      transition: glide,
+                      // One screen pixel in chart units, and how much islands have grown at this zoom.
+                      // Both follow the settled scale, so they change after a glide, not during it.
+                      ["--u" as string]: 1 / settledScale,
+                      ["--boost" as string]: zoomBoost(settledScale),
                     }}
                   >
-                    <MapBase />
+                    <IslandDefs />
+                    <svg className="map-layer" width={MAP_WIDTH} height={MAP_HEIGHT} viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`} aria-hidden="true">
+                      <MapBase />
+                    </svg>
+                    {/* chart paper: a tiled background image, which costs nothing to redraw */}
+                    <div className="map-paper" aria-hidden="true" />
+
                     <MapLayers
-                      scale={scale}
+                      scale={settledScale}
                       region={region}
                       showRoute={showRoute}
                       showPoneglyphs={showPoneglyphs}
                       showFactions={showFactions}
+                      selectedId={selectedId}
                       onHover={handleHover}
                       onSelect={handleSelect}
                     />
 
-                    {selectedPoint ? (
-                      <g transform={`translate(${selectedPoint.px} ${selectedPoint.py})`} className="pointer-events-none">
-                        <circle r={11 * u} fill="none" stroke="#fbeab0" strokeWidth={2 * u} />
-                        <circle r={11 * u} fill="none" stroke="#fbeab0" strokeWidth={1.5 * u} opacity="0.7">
-                          <animate attributeName="r" from={11 * u} to={24 * u} dur="1.6s" repeatCount="indefinite" />
-                          <animate attributeName="opacity" from="0.7" to="0" dur="1.6s" repeatCount="indefinite" />
-                        </circle>
-                      </g>
+                    {/* the selected place: a ripple spreading out from it once, then a glowing ring.
+                        Keyed by the selection so both play again each time a new place is picked. */}
+                    {selectedPoint && subject ? (
+                      <div
+                        key={subjectKey(subject)}
+                        className="map-pin pointer-events-none"
+                        style={{ left: selectedPoint.px, top: selectedPoint.py, ["--ring" as string]: `${selectedRadius.toFixed(1)}px` }}
+                      >
+                        <span className="isle-ripple" />
+                        <span className="isle-glow" />
+                      </div>
                     ) : null}
 
+                    {/* the name of whatever is under the pointer, for places too crowded to label */}
                     {hover ? (
-                      <text
-                        x={hover.px}
-                        y={hover.py - 12 * u}
-                        textAnchor="middle"
-                        fontSize={13 * u}
-                        fontFamily="var(--font-sans)"
-                        fontWeight={700}
-                        fill="#ffffff"
-                        stroke="#031523"
-                        strokeWidth={4 * u}
-                        strokeLinejoin="round"
-                        paintOrder="stroke"
-                        className="pointer-events-none select-none"
-                      >
-                        {hover.name}
-                      </text>
+                      <div className="map-pin pointer-events-none" data-tier={hover.tier ?? 3} style={{ left: hover.px, top: hover.py }}>
+                        <span className="map-hover-name">{hover.name}</span>
+                      </div>
                     ) : null}
-                  </g>
-                </svg>
+                  </div>
+                </div>
               ) : (
                 <div className="grid h-full place-items-center">
                   <div className="flex flex-col items-center gap-3 text-parchment-100">
@@ -685,8 +914,24 @@ export function WorldMap() {
                 </div>
               )}
 
+              {/* details for the selected place: beside the island on wide screens */}
+              <AnimatePresence>
+                {ready && subject && selectedPoint && isDesktop ? (
+                  // One key for every island: picking another one changes the popover's
+                  // content and position, but never unmounts and remounts the popover.
+                  <LocationPopover
+                    key="popover"
+                    subject={subject}
+                    anchor={{ x: translateX + selectedPoint.px * scale, y: translateY + selectedPoint.py * scale }}
+                    frame={size}
+                    transition={glide}
+                    onClose={closePanel}
+                  />
+                ) : null}
+              </AnimatePresence>
+
               {/* layer switches */}
-              <div className="absolute left-2 top-2 flex flex-wrap gap-1.5">
+              <div className="absolute left-2 top-2 flex max-w-[calc(100%-3.75rem)] flex-wrap gap-1.5">
                 {[
                   { label: "Course", on: showRoute, set: setShowRoute },
                   { label: "Poneglyphs", on: showPoneglyphs, set: setShowPoneglyphs },
@@ -709,8 +954,8 @@ export function WorldMap() {
                 ))}
               </div>
 
-              {/* zoom */}
-              <div className="absolute bottom-2 right-2 flex flex-col overflow-hidden rounded-md border border-gold-600/70 bg-ocean-950/85 text-parchment-100 backdrop-blur-sm">
+              {/* zoom: top corner on a phone, clear of the sheet that rises from the bottom */}
+              <div className="absolute right-2 top-2 flex flex-col overflow-hidden rounded-md border border-gold-600/70 bg-ocean-950/85 text-parchment-100 backdrop-blur-sm lg:bottom-2 lg:top-auto">
                 <button type="button" onClick={() => zoomBy(1.7)} aria-label="Zoom in" className="p-2 hover:bg-gold-400 hover:text-ink-900">
                   <ZoomIn className="h-4 w-4" />
                 </button>
@@ -725,12 +970,19 @@ export function WorldMap() {
               {/* legend */}
               <ul className="absolute bottom-2 left-2 hidden max-w-[70%] flex-wrap gap-x-3 gap-y-1 rounded-md bg-ocean-950/75 px-2.5 py-1.5 text-[10.5px] text-parchment-100 backdrop-blur-sm sm:flex">
                 <li className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-gold-400" />
-                  Story landmark
+                  <svg viewBox="-0.2 -1.4 1.4 1.7" className="h-3 w-3" aria-hidden="true">
+                    <path d="M0 0.2V-1.2" stroke="#fbf4e1" strokeWidth="0.16" strokeLinecap="round" />
+                    <path d="M0-1.2L1-0.82L0-0.44Z" fill="#ecc14f" />
+                  </svg>
+                  Visited by the crew
                 </li>
                 <li className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full border border-dashed border-parchment-100" />
+                  <span className="h-2.5 w-2.5 rounded-full border border-dashed border-parchment-100 bg-parchment-100/30" />
                   Position unconfirmed
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full border border-ink-900 bg-[#97948c]" />
+                  Destroyed
                 </li>
                 <li className="flex items-center gap-1.5">
                   <span className="h-2 w-2 bg-redline-400 ring-1 ring-parchment-100" />
@@ -744,55 +996,43 @@ export function WorldMap() {
               </ul>
             </div>
 
-            {/* side panel */}
-            <aside className="parchment flex max-h-[680px] min-h-[220px] flex-col rounded-md p-4 lg:h-[58vh]" aria-live="polite">
-              {selectedLocation || selectedStone ? (
-                <div className="flex min-h-0 flex-1 flex-col">
-                  <button
-                    type="button"
-                    onClick={() => setSelection(null)}
-                    className="mb-2 inline-flex items-center gap-1 self-end text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-500 hover:text-ink-900"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                    Close
-                  </button>
-                  <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-                    {selectedLocation ? <LocationDetails location={selectedLocation} /> : null}
-                    {selectedStone ? <PoneglyphDetails stone={selectedStone} /> : null}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex min-h-0 flex-1 flex-col">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-500">
-                    {regionInfo ? `${regionPlaces.length} places` : "Ports of call"}
-                  </p>
-                  <h3 className="mt-0.5 font-display text-3xl leading-none text-ink-900">{regionInfo ? regionInfo.name : "The voyage"}</h3>
-                  <p className="mt-1.5 text-sm leading-snug text-ink-700">
-                    {regionInfo
-                      ? regionInfo.blurb
-                      : "Pick a marker, or one of the landmarks below. Choose a sea above to zoom in and list every place in it."}
-                  </p>
-                  <ul className="mt-3 min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1">
-                    {regionPlaces.map((place) => (
-                      <li key={place.id}>
-                        <button
-                          type="button"
-                          onClick={() => focusLocation(place.id)}
-                          className="flex w-full items-baseline justify-between gap-2 rounded-sm px-1.5 py-1 text-left hover:bg-gold-400/30"
-                        >
-                          <span className={cn("text-sm text-ink-900", place.tier === 1 && "font-semibold")}>{place.name}</span>
-                          {place.pois.length > 0 ? (
-                            <span className="shrink-0 text-[11px] text-ink-500">{place.pois.length} sites</span>
-                          ) : null}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+            {/* the list of places: always here, whether or not one is selected */}
+            <aside className="parchment flex max-h-[420px] min-h-[220px] flex-col rounded-md p-4 lg:h-[58vh] lg:max-h-[680px]">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-500">
+                {regionInfo ? `${regionPlaces.length} places` : "Ports of call"}
+              </p>
+              <h3 className="mt-0.5 font-display text-3xl leading-none text-ink-900">{regionInfo ? regionInfo.name : "The voyage"}</h3>
+              <p className="mt-1.5 text-sm leading-snug text-ink-700">
+                {regionInfo
+                  ? regionInfo.blurb
+                  : "Pick an island, or one of the landmarks below. Choose a sea above to zoom in and list every place in it."}
+              </p>
+              <ul className="mt-3 min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-1">
+                {regionPlaces.map((place) => (
+                  <li key={place.id}>
+                    <button
+                      type="button"
+                      onClick={() => focusLocation(place.id)}
+                      aria-current={place.id === selectedId ? "true" : undefined}
+                      className={cn(
+                        "flex w-full items-baseline justify-between gap-2 rounded-sm px-1.5 py-1 text-left hover:bg-gold-400/30",
+                        place.id === selectedId && "bg-gold-400/40",
+                      )}
+                    >
+                      <span className={cn("text-sm text-ink-900", place.tier === 1 && "font-semibold")}>{place.name}</span>
+                      {place.pois.length > 0 ? <span className="shrink-0 text-[11px] text-ink-500">{place.pois.length} sites</span> : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </aside>
           </div>
         </div>
+
+        {/* details for the selected place: a bottom sheet on narrow screens */}
+        <AnimatePresence>
+          {ready && subject && !isDesktop ? <LocationSheet key="sheet" subject={subject} onClose={closePanel} visible={inView} /> : null}
+        </AnimatePresence>
       </div>
     </section>
   );

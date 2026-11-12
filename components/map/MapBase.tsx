@@ -46,10 +46,9 @@ export const MapBase = memo(function MapBase() {
           <stop offset="50%" stopColor="#7cc6dc" stopOpacity="0.32" />
           <stop offset="100%" stopColor="#2089ad" stopOpacity="0.55" />
         </linearGradient>
-        <pattern id="map-calm" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(32)">
-          <rect width="14" height="14" fill="rgba(211,238,245,0.10)" />
-          <rect width="14" height="1.4" fill="rgba(211,238,245,0.22)" />
-        </pattern>
+        {/* The only pattern left on the chart, and it covers three narrow strips. Patterns are
+            slow to draw, and the chart is redrawn at every zoom level: the paper texture is a
+            CSS background on the wrapper instead (.map-paper), and the Calm Belts are flat. */}
         <pattern id="map-rock" width="26" height="40" patternUnits="userSpaceOnUse">
           <path d="M0 9 9 5 17 11 26 7M0 29 8 33 18 27 26 31" fill="none" stroke="rgba(0,0,0,0.38)" strokeWidth="1.2" />
         </pattern>
@@ -82,8 +81,8 @@ export const MapBase = memo(function MapBase() {
 
       {/* Grand Line and Calm Belts */}
       <rect x={0} y={BAND_TOP} width={MAP_WIDTH} height={BAND_BOTTOM - BAND_TOP} fill="url(#map-grandline)" />
-      <rect x={0} y={BAND_TOP} width={MAP_WIDTH} height={CALM_NORTH_INNER - BAND_TOP} fill="url(#map-calm)" />
-      <rect x={0} y={CALM_SOUTH_INNER} width={MAP_WIDTH} height={BAND_BOTTOM - CALM_SOUTH_INNER} fill="url(#map-calm)" />
+      <rect x={0} y={BAND_TOP} width={MAP_WIDTH} height={CALM_NORTH_INNER - BAND_TOP} fill="rgba(211,238,245,0.17)" />
+      <rect x={0} y={CALM_SOUTH_INNER} width={MAP_WIDTH} height={BAND_BOTTOM - CALM_SOUTH_INNER} fill="rgba(211,238,245,0.17)" />
       <g stroke="rgba(211,238,245,0.45)" strokeWidth="1" strokeDasharray="5 6">
         {[BAND_TOP, CALM_NORTH_INNER, CALM_SOUTH_INNER, BAND_BOTTOM].map((y) => (
           <line key={y} x1={0} x2={MAP_WIDTH} y1={y} y2={y} />

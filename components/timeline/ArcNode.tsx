@@ -24,8 +24,11 @@ interface ArcNodeProps {
 
 /** One stop on the timeline: a parchment card pinned to the spine. */
 export function ArcNode({ arc, number, side, setCode }: ArcNodeProps) {
+  // The starting position is the same on the server and in the browser (anything else is a
+  // hydration mismatch). Readers who ask for less motion get the same card with no travel
+  // time: it is simply there when it comes into view.
   const reduceMotion = useReducedMotion();
-  const offset = reduceMotion ? 0 : side === "left" ? -48 : 48;
+  const offset = side === "left" ? -48 : 48;
 
   return (
     <li
@@ -42,10 +45,10 @@ export function ArcNode({ arc, number, side, setCode }: ArcNodeProps) {
       />
 
       <motion.article
-        initial={{ opacity: 0, x: offset, y: reduceMotion ? 0 : 24 }}
+        initial={{ opacity: 0, x: offset, y: 24 }}
         whileInView={{ opacity: 1, x: 0, y: 0 }}
         viewport={{ once: true, margin: "0px 0px -12% 0px" }}
-        transition={{ duration: 0.7, ease: [0.2, 0.8, 0.2, 1] }}
+        transition={reduceMotion ? { duration: 0 } : { duration: 0.7, ease: [0.2, 0.8, 0.2, 1] }}
         className="parchment relative w-full rounded-lg p-4 sm:p-5 lg:w-[calc(50%-3.75rem)]"
       >
         {arc.pandaman ? <PandamanEasterEgg id={arc.id} /> : null}
