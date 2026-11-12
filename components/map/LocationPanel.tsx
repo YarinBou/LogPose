@@ -2,7 +2,7 @@
 
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { motion, useDragControls } from "framer-motion";
+import { AnimatePresence, motion, useDragControls, useReducedMotion } from "framer-motion";
 import { X } from "lucide-react";
 import { LocationDetails, PoneglyphDetails } from "@/components/map/LocationDetails";
 import type { MapLocation, Poneglyph } from "@/data/map";
@@ -20,16 +20,31 @@ function subjectName(subject: PanelSubject): string {
   return subject.kind === "location" ? subject.location.name : subject.stone.name;
 }
 
-interface PanelBodyProps {
-  subject: PanelSubject;
-  headingId: string;
-}
+/** The panel's entrance and exit: a spring, or a short fade when less motion is asked for. */
+const SPRING = { type: "spring", stiffness: 420, damping: 32, mass: 0.9 } as const;
+const FADE = { duration: 0.15 } as const;
 
-function PanelBody({ subject, headingId }: PanelBodyProps) {
-  return subject.kind === "location" ? (
-    <LocationDetails location={subject.location} headingId={headingId} />
-  ) : (
-    <PoneglyphDetails stone={subject.stone} headingId={headingId} />
+/**
+ * The panel's content. When the subject changes while the panel is open, the old content
+ * fades out as the new fades in, inside the same panel: the panel itself stays mounted.
+ */
+function PanelBody({ subject, headingId }: { subject: PanelSubject; headingId: string }) {
+  return (
+    <AnimatePresence mode="popLayout" initial={false}>
+      <motion.div
+        key={subjectKey(subject)}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
+      >
+        {subject.kind === "location" ? (
+          <LocationDetails location={subject.location} headingId={headingId} />
+        ) : (
+          <PoneglyphDetails stone={subject.stone} headingId={headingId} />
+        )}
+      </motion.div>
+    </AnimatePresence>
   );
 }
 
@@ -68,10 +83,15 @@ interface PopoverProps {
  * Sits beside the selected island, inside the map frame, with an arrow pointing at it.
  * It goes to the right of the island when there is room and to the left when there is not,
  * and it is repositioned on every pan and zoom so the arrow keeps pointing at the island.
+ *
+ * Two elements share the work: the outer one is moved into place with the same CSS
+ * transition as the map, so it travels with the island; the inner one springs open from
+ * the island's side (scale and fade), and closes the same way in reverse.
  */
 export function LocationPopover({ subject, anchor, frame, transition, onClose }: PopoverProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const headingId = useId();
+  const reduceMotion = useReducedMotion();
   const [height, setHeight] = useState(0);
 
   useDialogFocus(panelRef, true, onClose, subjectKey(subject));
@@ -105,27 +125,35 @@ export function LocationPopover({ subject, anchor, frame, transition, onClose }:
   const islandClear = onRight ? anchor.x < left : anchor.x > left + width;
   const showArrow = islandVisible && islandClear && arrowY >= 18 && arrowY <= height - 18;
 
+  // Open from the point nearest the island, so the popover seems to grow out of it.
+  const originY = height > 0 ? Math.min(1, Math.max(0, arrowY / height)) : 0.5;
+
   return (
     <div
       className="pointer-events-none absolute left-0 top-0 z-30"
       style={{ transform: `translate3d(${left.toFixed(1)}px, ${top.toFixed(1)}px, 0)`, transition, width }}
     >
-      <div
+      <motion.div
         ref={panelRef}
         role="dialog"
         aria-labelledby={headingId}
         tabIndex={-1}
+        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.82 }}
+        animate={reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }}
+        exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.88 }}
+        transition={reduceMotion ? FADE : SPRING}
         className="parchment pointer-events-auto relative flex flex-col rounded-lg outline-none ring-1 ring-ink-900/30"
-        style={{ maxHeight }}
+        style={{ maxHeight, originX: onRight ? 0 : 1, originY }}
       >
         {showArrow ? (
           <span
             aria-hidden="true"
             className={cn(
-              "absolute h-3.5 w-3.5 rotate-45 border-ink-900/30 bg-parchment-100",
+              "absolute h-3.5 w-3.5 border-ink-900/30 bg-parchment-100",
               onRight ? "-left-[7.5px] border-b border-l" : "-right-[7.5px] border-r border-t",
             )}
-            style={{ top: arrowY - 7 }}
+            // Follows the island with the same timing as the map, so it never lags behind.
+            style={{ top: 0, transform: `translateY(${(arrowY - 7).toFixed(1)}px) rotate(45deg)`, transition }}
           />
         ) : null}
         <div className="flex shrink-0 items-center justify-between gap-3 px-4 pb-1 pt-3">
@@ -134,10 +162,10 @@ export function LocationPopover({ subject, anchor, frame, transition, onClose }:
           </p>
           <CloseButton onClose={onClose} name={subjectName(subject)} />
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 [scrollbar-width:thin]">
+        <div className="relative min-h-0 flex-1 overflow-y-auto px-4 pb-4 [scrollbar-width:thin]">
           <PanelBody subject={subject} headingId={headingId} />
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }
@@ -154,18 +182,23 @@ interface SheetProps {
 }
 
 /**
- * Slides up from the bottom of the screen and covers at most the lower 58% of it, so the
- * island stays visible above. Drag the handle down, or press Close or Escape, to dismiss.
- * It is portalled to <body> so that no ancestor can clip or re-anchor it.
+ * Slides up from the bottom of the screen on a spring and covers at most the lower 58% of
+ * it, so the island stays visible above. Drag the handle down, or press Close or Escape,
+ * to send it back down. It is portalled to <body> so that no ancestor can clip or
+ * re-anchor it.
  */
 export function LocationSheet({ subject, onClose, visible }: SheetProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const headingId = useId();
   const dragControls = useDragControls();
+  const reduceMotion = useReducedMotion();
 
   useDialogFocus(panelRef, visible, onClose, subjectKey(subject));
 
   if (typeof document === "undefined") return null;
+
+  const hidden = reduceMotion ? { opacity: 0 } : { y: "100%" };
+  const shown = reduceMotion ? { opacity: 1 } : { y: 0 };
 
   return createPortal(
     <motion.div
@@ -173,7 +206,11 @@ export function LocationSheet({ subject, onClose, visible }: SheetProps) {
       role="dialog"
       aria-labelledby={headingId}
       tabIndex={-1}
-      drag="y"
+      initial={hidden}
+      animate={visible ? shown : hidden}
+      exit={hidden}
+      transition={reduceMotion ? FADE : SPRING}
+      drag={reduceMotion ? false : "y"}
       dragControls={dragControls}
       dragListener={false}
       dragConstraints={{ top: 0, bottom: 0 }}
@@ -184,7 +221,7 @@ export function LocationSheet({ subject, onClose, visible }: SheetProps) {
       className={cn(
         "parchment fixed inset-x-0 bottom-0 z-[60] flex max-h-[58svh] flex-col rounded-t-2xl outline-none ring-1 ring-ink-900/30",
         "pb-[env(safe-area-inset-bottom)] shadow-[0_-12px_32px_-8px_rgba(0,0,0,0.7)]",
-        !visible && "pointer-events-none invisible",
+        !visible && "pointer-events-none",
       )}
     >
       {/* handle: the only part that starts a drag, so the content below can scroll */}
@@ -196,7 +233,7 @@ export function LocationSheet({ subject, onClose, visible }: SheetProps) {
         <span className="h-1.5 w-12 rounded-full bg-ink-500/50" aria-hidden="true" />
         <CloseButton onClose={onClose} name={subjectName(subject)} />
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4">
+      <div className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4">
         <PanelBody subject={subject} headingId={headingId} />
       </div>
     </motion.div>,

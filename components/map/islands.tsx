@@ -2,7 +2,8 @@
  * Island artwork for the 2D chart.
  *
  * Every island is drawn in its own little coordinate space, about one unit in radius and
- * centred on the origin; the map scales and places it. Two things decide what is drawn:
+ * centred on the origin; the map gives each island its own small <svg>, places it, and
+ * sizes it. Two things decide what is drawn:
  *
  *  - the silhouette: generated from the island's id, so each island has its own outline
  *    and it never changes between renders, or hand-authored for landmarks;
@@ -357,9 +358,14 @@ const GRAIN_ID = "isle-grain";
 const LEFT_ID = "isle-left-half";
 const RIGHT_ID = "isle-right-half";
 
-/** Shared <defs> for all islands: paper grain, and the two halves used by split islands. */
+/**
+ * Shared definitions for all islands: paper grain, and the two halves used by split
+ * islands. Each island is its own <svg>, but ids are document-wide, so one copy of these,
+ * in an empty <svg> of its own, serves them all.
+ */
 export function IslandDefs() {
   return (
+    <svg width="0" height="0" className="absolute" aria-hidden="true">
     <defs>
       {/* Specks of paper grain: plain shapes rather than a filter, so they cost nothing to pan. */}
       <pattern id={GRAIN_ID} width="0.5" height="0.5" patternUnits="userSpaceOnUse" patternTransform="rotate(17)">
@@ -376,6 +382,7 @@ export function IslandDefs() {
         <rect x="0" y="-3" width="3" height="6" />
       </clipPath>
     </defs>
+    </svg>
   );
 }
 
@@ -387,23 +394,51 @@ interface IslandArtProps {
 }
 
 /**
- * One island, drawn about the origin at roughly unit radius: a ring of shoreline foam,
- * the land with an ink outline, paper grain and a touch of relief on the larger ones, and
- * the landmark's own drawing if it has one. Smaller tiers get fewer layers.
+ * The box every island is drawn in: about one unit of land around the origin, with room
+ * above for a pennant and around the edge for the foam. An <svg> with this viewBox, sized
+ * 2.8 by 3.2 island radii, draws the island at the right size.
  */
-export function IslandArt({ look, tier, destroyed, unplaced }: IslandArtProps) {
+export const ISLAND_VIEWBOX = "-1.4 -1.8 2.8 3.2";
+
+/** Cloud, bubble and unconfirmed islands have no shoreline to break against. */
+export function hasFoam(look: IslandLook, unplaced: boolean): boolean {
+  return !look.soft && !unplaced;
+}
+
+/**
+ * Shoreline foam: the island's outline again, a little larger and nearly transparent.
+ * It is drawn in an <svg> of its own, under the land, so that it can fade in and out
+ * without the land having to be redrawn.
+ */
+export function IslandFoam({ look }: { look: IslandLook }) {
+  return (
+    <path
+      d={look.d}
+      transform="scale(1.3)"
+      fill="#ffffff"
+      fillOpacity={0.2}
+      fillRule={look.ring ? "evenodd" : undefined}
+      stroke="#ffffff"
+      strokeOpacity={0.5}
+      strokeWidth={0.7}
+      vectorEffect="non-scaling-stroke"
+    />
+  );
+}
+
+/**
+ * The island itself, drawn about the origin at roughly unit radius: the land with an ink
+ * outline, paper grain and a touch of relief on the larger ones, and the landmark's own
+ * drawing if it has one. Smaller tiers get fewer layers.
+ */
+export function IslandLand({ look, tier, destroyed, unplaced }: IslandArtProps) {
   const { d, palette, glyph, soft, split, ring } = look;
   const lineWidth = tier === 1 ? 1.25 : tier === 2 ? 1 : 0.8;
   const fillRule = ring ? "evenodd" : undefined;
 
   return (
     <>
-      {/* shoreline foam: the outline again, a little larger and nearly transparent */}
-      {!soft && !unplaced ? (
-        <path className="isle-foam" d={d} transform="scale(1.3)" fill="#ffffff" fillOpacity={0.2} fillRule={fillRule} stroke="#ffffff" strokeOpacity={0.5} strokeWidth={0.7} vectorEffect="non-scaling-stroke" />
-      ) : null}
-
-      <g className="isle-land">
+      <g>
         {split ? (
           <>
             <path d={d} fill={palette.fill} clipPath={`url(#${LEFT_ID})`} />
@@ -430,7 +465,8 @@ export function IslandArt({ look, tier, destroyed, unplaced }: IslandArtProps) {
           <path d={d} transform="translate(0.1 0.12) scale(0.5)" fill={palette.shade} opacity={0.55} />
         ) : null}
 
-        {tier < 3 && !unplaced ? <path d={d} fill={`url(#${GRAIN_ID})`} fillRule={fillRule} pointerEvents="none" /> : null}
+        {/* paper grain, on landmarks only: a pattern fill is the slowest thing an island draws */}
+        {tier === 1 && !unplaced ? <path d={d} fill={`url(#${GRAIN_ID})`} fillRule={fillRule} pointerEvents="none" /> : null}
 
         {glyph ? glyph(palette) : null}
 

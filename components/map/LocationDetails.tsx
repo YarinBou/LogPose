@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { motion, useReducedMotion, type Variants } from "framer-motion";
 import { BookOpen, EyeOff, Flag, MapPin, Tv, Users } from "lucide-react";
 import {
   regionName,
@@ -57,13 +58,24 @@ const VISITOR_LIMIT = 5;
 
 const sectionTitle = "text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-500";
 
+/** Stat cards and chips arrive one after another, 35ms apart, rather than all at once. */
+const STAGGER: Variants = {
+  hidden: {},
+  show: { transition: { staggerChildren: 0.035, delayChildren: 0.06 } },
+};
+const RISE: Variants = {
+  hidden: { opacity: 0, y: 8 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.24, ease: "easeOut" } },
+};
+
 /* ------------------------------------------------------------------ */
 /* Pieces                                                               */
 /* ------------------------------------------------------------------ */
 
 function StatCard({ label, value, tone = "plain", icon }: { label: string; value: string; tone?: "plain" | "anime" | "manga"; icon?: React.ReactNode }) {
   return (
-    <div
+    <motion.div
+      variants={RISE}
       className={cn(
         "flex min-w-0 flex-col justify-between rounded-md border px-2 py-2",
         tone === "plain" && "border-ink-500/25 bg-parchment-50/70",
@@ -77,21 +89,23 @@ function StatCard({ label, value, tone = "plain", icon }: { label: string; value
         {label}
       </dt>
       <dd className={cn("mt-0.5 break-words font-display leading-tight text-ink-900", value.length > 9 ? "text-[15px]" : "text-xl")}>{value}</dd>
-    </div>
+    </motion.div>
   );
 }
 
 function VisitorChips({ visitors, label }: { visitors: Visitor[]; label: string }) {
   const [expanded, setExpanded] = useState(false);
+  const reduceMotion = useReducedMotion();
   const shown = expanded ? visitors : visitors.slice(0, VISITOR_LIMIT);
   const hidden = visitors.length - shown.length;
 
   return (
     <div>
       <p className="text-[10.5px] font-semibold uppercase tracking-[0.12em] text-ink-500">{label}</p>
-      <ul className="mt-1 flex flex-wrap gap-1.5">
+      <motion.ul className="mt-1 flex flex-wrap gap-1.5" variants={STAGGER} initial={reduceMotion ? false : "hidden"} animate="show">
         {shown.map((visitor) => (
-          <li
+          <motion.li
+            variants={RISE}
             key={`${visitor.name}-${visitor.note ?? ""}`}
             className={cn(
               "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[12px] text-ink-900",
@@ -106,7 +120,7 @@ function VisitorChips({ visitors, label }: { visitors: Visitor[]; label: string 
                 {NOTE_LABEL[visitor.note]}
               </span>
             ) : null}
-          </li>
+          </motion.li>
         ))}
         {hidden > 0 ? (
           <li>
@@ -131,7 +145,7 @@ function VisitorChips({ visitors, label }: { visitors: Visitor[]; label: string 
             </button>
           </li>
         ) : null}
-      </ul>
+      </motion.ul>
     </div>
   );
 }
@@ -183,6 +197,7 @@ interface LocationDetailsProps {
 export function LocationDetails({ location, arcHrefBase = "", headingId }: LocationDetailsProps) {
   const [limit] = useSpoilerLimit();
   const [revealed, setRevealed] = useState<string | null>(null);
+  const reduceMotion = useReducedMotion();
 
   const arcs = arcsAtLocation(location.id);
   const guarded = (location.spoilerLevel ?? 0) > limit && revealed !== location.id;
@@ -259,7 +274,10 @@ export function LocationDetails({ location, arcHrefBase = "", headingId }: Locat
       ) : (
         <>
           {stats.length > 0 ? (
-            <dl
+            <motion.dl
+              variants={STAGGER}
+              initial={reduceMotion ? false : "hidden"}
+              animate="show"
               // An odd card out takes the full row rather than leaving a hole beside it.
               className={cn("grid grid-cols-2 gap-2 [&>*:last-child:nth-child(odd)]:col-span-2", stats.length >= 4 && "sm:grid-cols-4")}
               aria-label="At a glance"
@@ -267,7 +285,7 @@ export function LocationDetails({ location, arcHrefBase = "", headingId }: Locat
               {stats.map((stat) => (
                 <StatCard key={stat.label} {...stat} />
               ))}
-            </dl>
+            </motion.dl>
           ) : null}
 
           {location.description ? <p className="text-[14.5px] leading-relaxed text-ink-700">{location.description}</p> : null}

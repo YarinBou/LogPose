@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { motion, useReducedMotion, useScroll, useTransform } from "framer-motion";
 import { Anchor, ChevronDown } from "lucide-react";
 import { JOLLY_ROGER_SVG } from "@/components/art/Sprites";
@@ -13,6 +13,11 @@ const FLAG_URL = `url("data:image/svg+xml,${encodeURIComponent(JOLLY_ROGER_SVG)}
 /**
  * The Jolly Roger, cut into vertical strips. Each strip bobs slightly later and slightly
  * further than the one before it, which reads as cloth rippling away from the pole.
+ *
+ * How far a strip travels is set by the height of a wrapper around it: the animation moves
+ * the wrapper by 100% of its own height, up and down. That keeps the keyframes free of
+ * CSS variables, which is what lets the browser run all 36 strips on the GPU. (Keyframes
+ * that read a variable are animated on the main thread, and cost frames everywhere.)
  */
 function WavingJollyRoger() {
   const stripWidth = FLAG_WIDTH / FLAG_STRIPS;
@@ -23,22 +28,30 @@ function WavingJollyRoger() {
       <div className="relative -mr-px h-[190px] w-2 rounded-full bg-gradient-to-r from-wood-500 to-wood-800 shadow-md">
         <span className="absolute -top-2 left-1/2 h-3.5 w-3.5 -translate-x-1/2 rounded-full bg-gold-400 shadow" />
       </div>
-      <div className="flex drop-shadow-[0_10px_14px_rgba(0,0,0,0.55)]" style={{ width: FLAG_WIDTH, height: FLAG_HEIGHT }}>
+      <div className="flex items-start" style={{ width: FLAG_WIDTH, height: FLAG_HEIGHT }}>
         {Array.from({ length: FLAG_STRIPS }, (_, i) => (
           <div
             key={i}
+            className="relative"
             style={{
               width: stripWidth + 0.5,
               marginRight: -0.5,
-              height: FLAG_HEIGHT,
-              backgroundImage: FLAG_URL,
-              backgroundSize: `${FLAG_WIDTH}px ${FLAG_HEIGHT}px`,
-              backgroundPosition: `${-i * stripWidth}px 0`,
-              ["--amp" as string]: `${(i / FLAG_STRIPS) * 9}px`,
+              // The strip's travel: nothing at the pole, nine pixels at the free edge.
+              height: (i / FLAG_STRIPS) * 9,
               animation: "flag-wave 1.15s ease-in-out infinite alternate",
               animationDelay: `${-i * 62}ms`,
             }}
-          />
+          >
+            <div
+              className="absolute left-0 top-0 w-full shadow-[0_12px_12px_-8px_rgba(0,0,0,0.55)]"
+              style={{
+                height: FLAG_HEIGHT,
+                backgroundImage: FLAG_URL,
+                backgroundSize: `${FLAG_WIDTH}px ${FLAG_HEIGHT}px`,
+                backgroundPosition: `${-i * stripWidth}px 0`,
+              }}
+            />
+          </div>
         ))}
       </div>
     </div>
@@ -157,6 +170,17 @@ export function Hero() {
   const contentY = useTransform(scrollYProgress, [0, 1], [0, -90 * k]);
   const contentOpacity = useTransform(scrollYProgress, [0, 0.75], [1, 0]);
 
+  // Once the hero is scrolled away, its animations (flag, currents, chevron) are paused:
+  // nobody can see them, and they would otherwise keep costing frames further down the page.
+  const [offscreen, setOffscreen] = useState(false);
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (!section) return;
+    const observer = new IntersectionObserver(([entry]) => setOffscreen(!entry.isIntersecting));
+    observer.observe(section);
+    return () => observer.disconnect();
+  }, []);
+
   function setSail(event: MouseEvent<HTMLAnchorElement>) {
     const target = document.getElementById("timeline");
     if (!target) return;
@@ -165,7 +189,12 @@ export function Hero() {
   }
 
   return (
-    <section ref={sectionRef} id="top" className="relative flex min-h-[100svh] items-center justify-center overflow-hidden">
+    <section
+      ref={sectionRef}
+      id="top"
+      data-offscreen={offscreen}
+      className="relative flex min-h-[100svh] items-center justify-center overflow-hidden"
+    >
       <motion.div style={{ y: sceneY }} className="absolute inset-0">
         <GrandLineEntrance />
       </motion.div>
@@ -247,7 +276,10 @@ export function Hero() {
         style={{ opacity: contentOpacity }}
         className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 text-parchment-50/70"
       >
-        <ChevronDown className="h-7 w-7 animate-bounce" />
+        {/* The bounce is on a wrapper, not on the icon: an <svg> cannot be moved by the GPU. */}
+        <span className="block animate-bounce">
+          <ChevronDown className="h-7 w-7" />
+        </span>
       </motion.a>
     </section>
   );

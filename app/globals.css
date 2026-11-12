@@ -195,43 +195,403 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
-/* Islands on the 2D chart                                              */
+/* The 2D chart                                                         */
 /* ------------------------------------------------------------------ */
 
+/*
+ * The chart is a stack of separate elements inside .map-world, which is moved and scaled
+ * with one CSS transform. Everything placed on it sits at a point in chart units and is
+ * then scaled by --u (one screen pixel in chart units, set on .map-world), so that inside
+ * an island or a pin all sizes are plain screen pixels. See components/map/WorldMap.tsx.
+ */
+.map-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1400px;
+  height: 900px;
+  transform-origin: 0 0;
+}
+
+/* Mid-glide: move the existing picture; do not redraw it at every zoom on the way. */
+.map-world.is-travelling {
+  will-change: transform;
+}
+
+.map-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/*
+ * Chart paper: faint fibres and specks over the sea. It is a small image tiled as a CSS
+ * background, which the browser draws once and then just copies, at any zoom. As an SVG
+ * pattern across the whole chart it was the slowest thing on the map to redraw.
+ */
+.map-paper {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cg stroke='%23fbf4e1' stroke-width='.9' stroke-linecap='round' opacity='.08'%3E%3Cpath d='M6 14l9 2M40 8l7-3M70 22l10 1M22 44l-8 3M58 52l9-2M12 76l8 1M46 80l-7 2M80 66l6-3'/%3E%3C/g%3E%3Cg fill='%23031523' opacity='.11'%3E%3Ccircle cx='30' cy='20' r='.9'/%3E%3Ccircle cx='64' cy='38' r='.7'/%3E%3Ccircle cx='14' cy='58' r='.8'/%3E%3Ccircle cx='78' cy='84' r='.9'/%3E%3Ccircle cx='48' cy='64' r='.6'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 90px 90px;
+}
+
+/* A point on the chart with screen-pixel content: Poneglyphs, the selection ring, names. */
+.map-pin {
+  position: absolute;
+  width: 0;
+  height: 0;
+  transform: scale(var(--u, 1));
+  transform-origin: 0 0;
+}
+
+/* The course. Widths and dashes are in screen pixels, converted to chart units by --u. */
+.route-shadow {
+  stroke-width: calc(var(--u, 1) * 4.5px);
+}
+
+.route-line {
+  stroke-width: calc(var(--u, 1) * 2px);
+  stroke-dasharray: calc(var(--u, 1) * 8px) calc(var(--u, 1) * 6px);
+}
+
+.route-detour {
+  stroke-width: calc(var(--u, 1) * 1.4px);
+  stroke-dasharray: calc(var(--u, 1) * 2px) calc(var(--u, 1) * 5px);
+}
+
+.route-uncharted {
+  stroke-width: calc(var(--u, 1) * 1.4px);
+  stroke-dasharray: calc(var(--u, 1) * 1px) calc(var(--u, 1) * 7px);
+}
+
+/* Laugh Tale: on no chart. */
+.map-unknown {
+  position: absolute;
+  left: -8px;
+  top: -8px;
+  width: 16px;
+  height: 16px;
+  border: 1.2px dashed var(--color-gold-300);
+  border-radius: 50%;
+  background: rgba(3, 21, 35, 0.75);
+  color: var(--color-gold-300);
+  font: 11px/14px var(--font-display);
+  text-align: center;
+}
+
+/* Poneglyphs: small blocks, red for the four Road Poneglyphs. */
+.map-stone-hit {
+  position: absolute;
+  left: -9px;
+  top: -9px;
+  width: 18px;
+  height: 18px;
+}
+
+.map-stone {
+  position: absolute;
+  left: -3.8px;
+  top: -3.8px;
+  width: 7.6px;
+  height: 7.6px;
+  border: 1px solid var(--color-parchment-50);
+  background: #3f4a5c;
+}
+
+.map-stone.is-road {
+  background: var(--color-redline-400);
+}
+
+/* The name of whatever is under the pointer. It sits just above the island. */
+.map-hover-name {
+  position: absolute;
+  left: 0;
+  bottom: calc(var(--isle, 4px) * var(--boost, 1) + 8px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  color: var(--color-ink-900);
+  font: 16px/1 var(--font-display);
+  -webkit-text-stroke: 4.5px var(--color-parchment-50);
+  paint-order: stroke fill;
+}
+
+/* ------------------------------------------------------------------ */
+/* Islands                                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * --isle is the island's radius with the whole world in view, by tier (mirrors ISLE_PX in
+ * WorldMap.tsx). --boost, set on .map-world, is how much islands have grown at the current
+ * zoom. --r is the radius on screen right now, and everything else is sized from it.
+ */
+.isle,
+.map-pin {
+  --isle: 4px;
+}
+
+.isle[data-tier="2"],
+.map-pin[data-tier="2"] {
+  --isle: 6.6px;
+}
+
+.isle[data-tier="1"],
+.map-pin[data-tier="1"] {
+  --isle: 10px;
+}
+
 .isle {
+  --r: calc(var(--isle) * var(--boost, 1));
+  position: absolute;
+  width: 0;
+  height: 0;
+  transform: scale(var(--u, 1));
+  transform-origin: 0 0;
   cursor: pointer;
 }
 
-/* The drawing is moved by CSS, about its own centre rather than the chart's origin. */
+.isle.is-dimmed {
+  opacity: 0.22;
+}
+
+/* The tappable area: the island and a margin, and never smaller than 24px across. */
+.isle-hit {
+  --hit: max(calc(var(--r) + 4px), 12px);
+  position: absolute;
+  left: calc(var(--hit) * -1);
+  top: calc(var(--hit) * -1);
+  width: calc(var(--hit) * 2);
+  height: calc(var(--hit) * 2);
+  border-radius: 50%;
+}
+
+/* Zero-size wrappers sitting on the island's point, so they turn and scale about it. */
+.isle-bob,
 .isle-body {
-  transform-box: fill-box;
-  transform-origin: center;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
 }
 
-/* Hover: the ink outline lightens. Selected: it turns gold, inside a glowing ring. */
-.isle:hover .isle-ink {
-  stroke: var(--color-gold-200);
+/*
+ * The bob wrapper is as tall as the bob is high (a tenth of the island's radius), and the
+ * animation lifts it by 100% of that. Keyframes that read a CSS variable are animated on
+ * the main thread; a percentage keeps this one on the GPU.
+ */
+.isle-bob {
+  height: calc(var(--r) * 0.1);
 }
 
+/* The drawing: an <svg> whose viewBox is 2.8 by 3.2 radii, placed so its origin is the point. */
+.isle-art {
+  position: absolute;
+  left: calc(var(--r) * -1.4);
+  top: calc(var(--r) * -1.8);
+  width: calc(var(--r) * 2.8);
+  height: calc(var(--r) * 3.2);
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* A crew or organisation rather than a place: a small red diamond. */
+.isle-faction {
+  position: absolute;
+  left: -3.4px;
+  top: -3.4px;
+  width: 6.8px;
+  height: 6.8px;
+  transform: rotate(45deg);
+  border: 0.9px solid var(--color-parchment-50);
+  background: var(--color-redline-400);
+}
+
+/* Names: the display face in ink, with a halo of chart paper so they read over anything. */
+.isle-label {
+  position: absolute;
+  left: calc(var(--r) + 5px);
+  top: 0;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  color: var(--color-ink-900);
+  font: 11.5px/1 var(--font-display);
+  letter-spacing: 0.3px;
+  /* The halo is a stroke painted under the letters: two passes, where eight offset
+     shadows would be nine. Names are redrawn at every zoom, so this adds up. */
+  -webkit-text-stroke: 3.4px var(--color-parchment-100);
+  paint-order: stroke fill;
+}
+
+.isle[data-tier="2"] .isle-label {
+  font-size: 13px;
+}
+
+.isle[data-tier="1"] .isle-label {
+  font-size: 15.5px;
+}
+
+.isle-label-left {
+  left: auto;
+  right: calc(var(--r) + 5px);
+}
+
+.isle-label.is-ruin {
+  color: var(--color-ink-500);
+}
+
+/* Selected: the outline turns gold, inside a glowing ring, and the island lifts a little. */
 .isle.is-selected .isle-ink {
   stroke: var(--color-gold-300);
 }
 
+.isle.is-selected .isle-body {
+  transform: translateY(calc(var(--r) * -0.14)) scale(1.06);
+}
+
+/* The ring is wider than the island, so the name steps out of its way. */
+.isle.is-selected .isle-label {
+  transform: translate(calc(var(--r) * 0.3 + 9px), -50%);
+}
+
+.isle.is-selected .isle-label-left {
+  transform: translate(calc(var(--r) * -0.3 - 9px), -50%);
+}
+
+/*
+ * Island motion. Only `transform` and `opacity` are ever animated, and only on elements
+ * of their own, so the browser moves pictures it has already drawn instead of redrawing.
+ */
+
+/* Hover and selection ease with a little overshoot, like a spring settling. */
+.isle-body,
+.isle-label {
+  transition: transform 0.42s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Hover only where there is a real pointer: on touch screens it would stick after a tap. */
+@media (hover: hover) {
+  .isle:hover .isle-ink {
+    stroke: var(--color-gold-200);
+  }
+
+  .isle:hover .isle-body {
+    transform: scale(1.04);
+  }
+
+  .isle.is-selected:hover .isle-body {
+    transform: translateY(calc(var(--r) * -0.14)) scale(1.08);
+  }
+
+  .isle:not(.is-selected):hover .isle-label {
+    transform: translateY(calc(-50% - 2px));
+  }
+}
+
+/* The selection ring and its ripple, sized by --ring (set on the pin, in pixels). */
+.isle-glow,
+.isle-ripple {
+  position: absolute;
+  left: calc(var(--ring) * -1);
+  top: calc(var(--ring) * -1);
+  width: calc(var(--ring) * 2);
+  height: calc(var(--ring) * 2);
+  border: 2.2px solid var(--color-gold-200);
+  border-radius: 50%;
+}
+
 .isle-glow {
-  filter: drop-shadow(0 0 3px rgba(251, 234, 176, 0.95)) drop-shadow(0 0 7px rgba(236, 193, 79, 0.6));
+  box-shadow:
+    0 0 5px 1px rgba(251, 234, 176, 0.9),
+    0 0 12px 2px rgba(236, 193, 79, 0.55),
+    inset 0 0 6px rgba(251, 234, 176, 0.5);
+  animation: isle-ring-in 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) 1 both;
+}
+
+.isle-ripple {
+  opacity: 0;
+  animation: isle-ripple 0.75s cubic-bezier(0.2, 0.7, 0.3, 1) 1 both;
+}
+
+@keyframes isle-ripple {
+  from {
+    opacity: 0.9;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 0;
+    transform: scale(3.4);
+  }
+}
+
+@keyframes isle-ring-in {
+  from {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/*
+ * Idle: landmark islands bob very slowly and their shoreline foam breathes. Each island
+ * takes its own --phase (0..1), which sets both where in the cycle it starts and how long
+ * its cycle is, so no two are ever in step. The animations exist only under .map-idle,
+ * which the map removes when it is off screen, in a background tab, or under reduced motion.
+ */
+@keyframes isle-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-100%);
+  }
+}
+
+@keyframes isle-foam {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.map-idle .isle-landmark .isle-bob {
+  animation: isle-bob calc(7s + var(--phase, 0) * 5s) ease-in-out calc(var(--phase, 0) * -12s) infinite;
+}
+
+.map-idle .isle-landmark .isle-foam {
+  animation: isle-foam calc(4.5s + var(--phase, 0) * 3s) ease-in-out calc(var(--phase, 0) * -7.5s) infinite;
 }
 
 /* ------------------------------------------------------------------ */
 /* Motion                                                               */
 /* ------------------------------------------------------------------ */
 
+/* Each flag strip sits in a wrapper as tall as its travel, and moves by that height. */
 @keyframes flag-wave {
   from {
-    transform: translateY(calc(var(--amp) * -1));
+    transform: translateY(-100%);
   }
   to {
-    transform: translateY(var(--amp));
+    transform: translateY(100%);
   }
+}
+
+/* A section scrolled out of view stops its animations until it comes back. */
+[data-offscreen="true"],
+[data-offscreen="true"] * {
+  animation-play-state: paused !important;
 }
 
 @keyframes drift-left {
