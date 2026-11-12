@@ -428,6 +428,9 @@ export function WorldMap() {
   viewRef.current = view;
 
   const drag = useRef<{ x: number; y: number; view: View; moved: boolean } | null>(null);
+  /** Fingers currently on the chart, by pointer id. */
+  const touches = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ view: View; distance: number; midX: number; midY: number } | null>(null);
   const suppressClick = useRef(false);
   const initialised = useRef(false);
   /** True while a requested glide is under way: see "settled scale" below. */
@@ -450,13 +453,12 @@ export function WorldMap() {
       if (next.width === 0 || next.height === 0) return;
       settleLater.current = false;
       setSize(next);
-      setView((current) => {
-        if (!initialised.current) {
-          initialised.current = true;
-          return clampView({ ...INITIAL_VIEW, zoom: coverZoom(next) }, next);
-        }
-        return clampView(current, next);
-      });
+      // Decide outside the updater: React may run an updater again when it re-renders,
+      // and by then the flag would say "already opened" and the first view would be lost
+      // (the map then opened fully zoomed out, a thin strip on a phone).
+      const first = !initialised.current;
+      initialised.current = true;
+      setView((current) => clampView(first ? { ...INITIAL_VIEW, zoom: coverZoom(next) } : current, next));
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -659,13 +661,83 @@ export function WorldMap() {
     };
   }, [ready]);
 
-  /* -- drag to pan -- */
+  /* -- drag to pan; two fingers pinch to zoom -- */
+  function suppressNextClick() {
+    // The click that follows a drag or a pinch must not select whatever is under the pointer.
+    suppressClick.current = true;
+    window.setTimeout(() => {
+      suppressClick.current = false;
+    }, 0);
+  }
+
+  /** Pinch state: the view and the two fingers' midpoint and spread when it began. */
+  function startPinch(surface: HTMLDivElement) {
+    const [a, b] = [...touches.current.values()];
+    const box = surface.getBoundingClientRect();
+    pinch.current = {
+      view: viewRef.current,
+      distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+      midX: (a.x + b.x) / 2 - box.left,
+      midY: (a.y + b.y) / 2 - box.top,
+    };
+    drag.current = null;
+    setGliding(false);
+    setDragging(true);
+    setHover(null);
+  }
+
   function handlePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0) return;
+    if (event.pointerType === "touch") {
+      touches.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (touches.current.size === 2) {
+        for (const pointerId of touches.current.keys()) {
+          try {
+            event.currentTarget.setPointerCapture(pointerId);
+          } catch {
+            // The finger may already have lifted.
+          }
+        }
+        startPinch(event.currentTarget);
+        return;
+      }
+      if (touches.current.size > 2) return;
+    }
     drag.current = { x: event.clientX, y: event.clientY, view: viewRef.current, moved: false };
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.pointerType === "touch" && touches.current.has(event.pointerId)) {
+      touches.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      const start = pinch.current;
+      if (start && touches.current.size === 2) {
+        const [a, b] = [...touches.current.values()];
+        const box = event.currentTarget.getBoundingClientRect();
+        const currentSize = sizeRef.current;
+        const base = fitScale(currentSize);
+        const oldScale = base * start.view.zoom;
+        const zoom = clamp(start.view.zoom * (Math.hypot(a.x - b.x, a.y - b.y) / start.distance), 1, MAX_SCALE / base);
+        const newScale = base * zoom;
+        // The chart point that was under the fingers' midpoint follows the midpoint.
+        const midX = (a.x + b.x) / 2 - box.left;
+        const midY = (a.y + b.y) / 2 - box.top;
+        const pointX = start.view.cx + (start.midX - currentSize.width / 2) / oldScale;
+        const pointY = start.view.cy + (start.midY - currentSize.height / 2) / oldScale;
+        // Islands are laid out for the new zoom once the fingers have rested a moment.
+        settleLater.current = true;
+        setView(
+          clampView(
+            {
+              zoom,
+              cx: pointX - (midX - currentSize.width / 2) / newScale,
+              cy: pointY - (midY - currentSize.height / 2) / newScale,
+            },
+            currentSize,
+          ),
+        );
+        return;
+      }
+    }
     const start = drag.current;
     if (!start) return;
     const dx = event.clientX - start.x;
@@ -682,13 +754,21 @@ export function WorldMap() {
     setView(clampView({ ...start.view, cx: start.view.cx - dx / currentScale, cy: start.view.cy - dy / currentScale }, sizeRef.current));
   }
 
-  function handlePointerUp() {
+  function handlePointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    touches.current.delete(event.pointerId);
+    if (pinch.current) {
+      // A pinch ends when either finger lifts; the other one does not turn into a drag.
+      if (touches.current.size < 2) {
+        pinch.current = null;
+        suppressNextClick();
+        setGliding(true);
+        setDragging(false);
+      }
+      drag.current = null;
+      return;
+    }
     if (drag.current?.moved) {
-      // The click that follows a drag must not select whatever is under the pointer.
-      suppressClick.current = true;
-      window.setTimeout(() => {
-        suppressClick.current = false;
-      }, 0);
+      suppressNextClick();
       setGliding(true);
       setDragging(false);
     }
@@ -773,15 +853,23 @@ export function WorldMap() {
         <div className="wood gold-trim mt-10 rounded-xl p-2.5 sm:p-4">
           {/* toolbar */}
           <div className="flex flex-col gap-3 pb-3 lg:flex-row lg:items-start lg:justify-between">
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Sea">
+            {/* one row that swipes sideways on a phone; wraps on wide screens */}
+            <div
+              className="-mx-2.5 flex gap-1.5 overflow-x-auto px-2.5 pb-1 [scrollbar-width:none] sm:-mx-4 sm:px-4 lg:mx-0 lg:flex-wrap lg:overflow-visible lg:px-0 lg:pb-0 [&::-webkit-scrollbar]:hidden"
+              role="group"
+              aria-label="Sea"
+            >
               {REGION_CHIPS.map((id) => (
                 <button
                   key={id}
                   type="button"
                   aria-pressed={region === id}
-                  onClick={() => focusRegion(id)}
+                  onClick={(event) => {
+                    focusRegion(id);
+                    event.currentTarget.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+                  }}
                   className={cn(
-                    "rounded-full border px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.08em] transition-colors",
+                    "shrink-0 whitespace-nowrap rounded-full border px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.08em] transition-colors",
                     region === id
                       ? "border-gold-300 bg-gold-400 text-ink-900"
                       : "border-gold-600/50 bg-black/25 text-parchment-100 hover:border-gold-300 hover:text-gold-300",
@@ -943,7 +1031,7 @@ export function WorldMap() {
                     aria-pressed={layer.on}
                     onClick={() => layer.set((value) => !value)}
                     className={cn(
-                      "rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.1em] backdrop-blur-sm transition-colors",
+                      "rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] backdrop-blur-sm transition-colors sm:px-2.5 sm:text-[11px] sm:tracking-[0.1em]",
                       layer.on
                         ? "border-gold-300 bg-ocean-950/80 text-gold-300"
                         : "border-parchment-100/30 bg-ocean-950/60 text-parchment-100/60",
