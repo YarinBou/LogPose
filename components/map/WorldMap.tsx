@@ -218,8 +218,6 @@ type Selection = { kind: "location"; id: string } | { kind: "poneglyph"; id: str
 
 interface IslandProps {
   site: Placed;
-  /** Which side the name goes on, or undefined when there is no room for it. */
-  side: LabelSide | undefined;
   dimmed: boolean;
   selected: boolean;
   onHover: (info: HoverInfo | null) => void;
@@ -233,7 +231,7 @@ interface IslandProps {
  * re-renders an island only if its name appears or disappears. And it is memoised, so
  * selecting an island re-renders that island and the one let go, not the other 277.
  */
-const Island = memo(function Island({ site, side, dimmed, selected, onHover, onSelect }: IslandProps) {
+const Island = memo(function Island({ site, dimmed, selected, onHover, onSelect }: IslandProps) {
   return (
     <div
       data-marker=""
@@ -267,8 +265,32 @@ const Island = memo(function Island({ site, side, dimmed, selected, onHover, onS
           </span>
         </span>
       )}
+    </div>
+  );
+});
 
-      {side ? <span className={cn("isle-label", side === "left" && "isle-label-left", site.destroyed && "is-ruin")}>{site.name}</span> : null}
+interface NameTagProps {
+  site: Placed;
+  side: LabelSide;
+  dimmed: boolean;
+  selected: boolean;
+}
+
+/**
+ * An island's name. Names live in a layer of their own above every island, rather than
+ * inside each island, so a neighbouring island drawn later can never cover one. A tag
+ * sits on its island's point and is scaled by --u just like the island, so it lines up
+ * with the island exactly and moves out of the way of the selection ring in the same way.
+ */
+const NameTag = memo(function NameTag({ site, side, dimmed, selected }: NameTagProps) {
+  return (
+    <div
+      aria-hidden="true"
+      data-tier={site.tier}
+      className={cn("isle isle-tag", selected && "is-selected", dimmed && "is-dimmed")}
+      style={{ left: site.px, top: site.py }}
+    >
+      <span className={cn("isle-label", side === "left" && "isle-label-left", site.destroyed && "is-ruin")}>{site.name}</span>
     </div>
   );
 });
@@ -337,13 +359,26 @@ const MapLayers = memo(function MapLayers({
         <Island
           key={site.id}
           site={site}
-          side={labels.get(site.id)}
           dimmed={region !== "all" && site.region !== region}
           selected={site.id === selectedId}
           onHover={onHover}
           onSelect={onSelect}
         />
       ))}
+
+      {/* every name above every island, so none is ever hidden under a neighbour */}
+      {visible.map((site) => {
+        const side = labels.get(site.id);
+        return side ? (
+          <NameTag
+            key={site.id}
+            site={site}
+            side={side}
+            dimmed={region !== "all" && site.region !== region}
+            selected={site.id === selectedId}
+          />
+        ) : null;
+      })}
 
       {showPoneglyphs
         ? PLACED_PONEGLYPHS.map((stone) => (
@@ -945,8 +980,15 @@ export function WorldMap() {
                   <div
                     className={cn("map-world", travelling && !reduceMotion && "is-travelling")}
                     style={{
-                      // translate3d gives the chart a layer of its own, so moving it is the GPU's job.
-                      transform: `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`,
+                      // While the chart moves, translate3d gives it a layer of its own so moving it
+                      // is the GPU's job. At rest it is a plain 2D transform: Safari draws a 3D-
+                      // transformed layer once at its natural size and then stretches the picture,
+                      // so zoomed-in island names (drawn small, then scaled back up) came out
+                      // blurred on iPhones. Dropping the layer at rest makes it redraw sharp.
+                      transform:
+                        travelling || dragging
+                          ? `translate3d(${translateX}px, ${translateY}px, 0) scale(${scale})`
+                          : `translate(${translateX}px, ${translateY}px) scale(${scale})`,
                       transition: glide,
                       // One screen pixel in chart units, and how much islands have grown at this zoom.
                       // Both follow the settled scale, so they change after a glide, not during it.
